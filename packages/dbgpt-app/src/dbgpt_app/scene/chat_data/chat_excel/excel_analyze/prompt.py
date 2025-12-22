@@ -223,41 +223,6 @@ _DUCKDB_RULES_EN = """
 2. Columns in ORDER BY must be properly selected in preceding CTE or query
 3. Ensure column reference consistency between CTE layers, especially for columns used in sorting and joining
 
-### 【CTE Alias and WHERE Rules - Critical】：
-**DuckDB WHERE clause must be processed before SELECT column definitions, cannot reference aliases defined in SELECT**
-
-Wrong 1:
-```sql
-WITH cte AS (
-    SELECT "original" AS "new"
-    FROM table
-    WHERE "original" IS NOT NULL  -- Wrong!
-)
-```
-
-Wrong 2:
-```sql
-WITH cte1 AS (SELECT "col" AS "new_col" FROM t),
-cte2 AS (
-    SELECT *
-    FROM cte1
-    WHERE "new_col" IS NOT NULL  -- Wrong! WHERE before alias definition
-)
-```
-
-Correct:
-```sql
-WITH cte1 AS (SELECT "col" AS "new_col" FROM t)
-SELECT * FROM cte1 WHERE "new_col" IS NOT NULL  -- WHERE in outermost query
-```
-
-Or use subquery:
-```sql
-SELECT * FROM (
-    SELECT "original" AS "new" FROM table
-) WHERE "new" IS NOT NULL
-```
-
 ### 【Time Series Analysis】：
 - **Year-over-year**: Requires at least 2 years of continuous data
 - **Month-over-month**: Requires sufficient historical data periods

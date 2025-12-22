@@ -730,8 +730,8 @@ class ChatExcel(BaseChat):
                 col_text += f"\n    统计信息: {col['statistics_summary']}"
             
             # 如果有唯一值，也添加进来（限制显示数量）
-            if 'unique_values' in col:
-                unique_vals = col['unique_values']
+            if 'unique_values_top5' in col:
+                unique_vals = col['unique_values_top5']
                 if len(unique_vals) <= 10:
                     col_text += f"\n    可选值: {', '.join(map(str, unique_vals))}"
                 else:

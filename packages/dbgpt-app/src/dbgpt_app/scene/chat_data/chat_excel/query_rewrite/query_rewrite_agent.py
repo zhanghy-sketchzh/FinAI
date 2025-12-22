@@ -292,7 +292,7 @@ class QueryRewriteAgent:
             table_description,
             chat_history=chat_history
         )
-        
+        print(f"🔍 query_rewrite_agent prompt: {prompt}")
         # 调用LLM（非流式）
         request_params = {
             "messages": [

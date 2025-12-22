@@ -811,6 +811,135 @@ class ExcelAutoRegisterService:
         
         return df_formatted
     
+    def _convert_column_types(self, df: pd.DataFrame) -> pd.DataFrame:
+        """
+        根据字段的实际值进行智能类型转换
+        
+        转换策略：
+        1. 尝试转换为日期类型
+        2. 尝试转换为数值类型（整数或浮点数）
+        3. 如果都失败，保持字符串类型
+        
+        Args:
+            df: 原始DataFrame
+        
+        Returns:
+            转换后的DataFrame
+        """
+        df_converted = df.copy()
+        
+        for col in df_converted.columns:
+            # 跳过已经是数值类型的列
+            if df_converted[col].dtype in ['int64', 'float64', 'int32', 'float32']:
+                continue
+            
+            # 跳过已经是日期类型的列
+            if pd.api.types.is_datetime64_any_dtype(df_converted[col]):
+                continue
+            
+            # 只处理object类型的列
+            if df_converted[col].dtype == 'object':
+                non_null_data = df_converted[col].dropna()
+                
+                if len(non_null_data) == 0:
+                    continue
+                
+                # 策略1: 尝试转换为日期类型
+                # 检查是否有足够的数据看起来像日期（至少30%的非空值能解析为日期）
+                date_success_count = 0
+                try:
+                    # 尝试解析前100个非空值
+                    sample_size = min(100, len(non_null_data))
+                    sample_data = non_null_data.head(sample_size)
+                    
+                    for val in sample_data:
+                        if pd.notna(val):
+                            try:
+                                pd.to_datetime(str(val), errors='raise')
+                                date_success_count += 1
+                            except:
+                                pass
+                    
+                    # 如果超过30%的值能解析为日期，则转换整个列为日期
+                    if date_success_count > sample_size * 0.3:
+                        try:
+                            df_converted[col] = pd.to_datetime(df_converted[col], errors='coerce')
+                            # 转换为字符串格式 YYYY-MM-DD
+                            df_converted[col] = df_converted[col].apply(
+                                lambda x: x.strftime('%Y-%m-%d') if pd.notna(x) else None
+                            )
+                            logger.debug(f"列 '{col}' 转换为日期类型")
+                            continue
+                        except:
+                            pass
+                except:
+                    pass
+                
+                # 策略2: 尝试转换为数值类型
+                # 检查是否有足够的数据看起来像数字（至少50%的非空值能解析为数字）
+                numeric_success_count = 0
+                has_decimal = False
+                
+                try:
+                    sample_size = min(100, len(non_null_data))
+                    sample_data = non_null_data.head(sample_size)
+                    
+                    for val in sample_data:
+                        if pd.notna(val):
+                            val_str = str(val).strip()
+                            # 移除常见的数字格式字符（千位分隔符、货币符号等）
+                            val_str = val_str.replace(',', '').replace('￥', '').replace('$', '').replace('€', '').replace(' ', '')
+                            
+                            # 检查是否为数字
+                            try:
+                                float_val = float(val_str)
+                                numeric_success_count += 1
+                                # 检查是否有小数部分
+                                if '.' in str(val) and float_val != int(float_val):
+                                    has_decimal = True
+                            except:
+                                pass
+                    
+                    # 如果超过50%的值能解析为数字，则转换整个列为数值类型
+                    if numeric_success_count > sample_size * 0.5:
+                        try:
+                            # 先转换为字符串，移除格式字符，再转换为数值
+                            df_converted[col] = df_converted[col].astype(str)
+                            df_converted[col] = df_converted[col].str.replace(',', '').str.replace('￥', '').str.replace('$', '').str.replace('€', '').str.strip()
+                            df_converted[col] = pd.to_numeric(df_converted[col], errors='coerce')
+                            
+                            # 根据是否有小数决定使用整数还是浮点数
+                            if not has_decimal and df_converted[col].notna().any():
+                                # 检查所有非空值是否都是整数
+                                all_integers = True
+                                for val in df_converted[col].dropna():
+                                    if pd.notna(val) and val != int(val):
+                                        all_integers = False
+                                        break
+                                
+                                if all_integers:
+                                    df_converted[col] = df_converted[col].astype('Int64')  # 可空整数类型
+                                    logger.debug(f"列 '{col}' 转换为整数类型")
+                                else:
+                                    df_converted[col] = df_converted[col].astype('float64')
+                                    logger.debug(f"列 '{col}' 转换为浮点数类型")
+                            else:
+                                df_converted[col] = df_converted[col].astype('float64')
+                                logger.debug(f"列 '{col}' 转换为浮点数类型")
+                            
+                            continue
+                        except Exception as e:
+                            logger.debug(f"列 '{col}' 转换为数值类型失败: {e}")
+                            pass
+                except Exception as e:
+                    logger.debug(f"列 '{col}' 数值类型检测失败: {e}")
+                    pass
+                
+                # 策略3: 保持为字符串类型（object）
+                # 不做任何转换
+                
+        return df_converted
+    
     def _detect_header_rows_rule_based(self, df_raw: pd.DataFrame) -> List[int]:
         """基于规则的表头行检测"""
         import numpy as np
@@ -917,6 +1046,7 @@ class ExcelAutoRegisterService:
         df = self._remove_empty_columns(df)
         df = self._remove_duplicate_columns(df)
         df = self._format_date_columns(df)
+        df = self._convert_column_types(df)  # 智能类型转换
         df.columns = [str(col).replace(' ', '').replace('\u00A0', '').replace('\n', '').replace('\r', '').replace('\t', '') for col in df.columns]
         
         # 清理后再次去重列名,防止SQLite报duplicate column name错误
@@ -1187,24 +1317,51 @@ class ExcelAutoRegisterService:
                 "is_key_field": self._is_potential_key_field(col_name, col_data)
             }
             
-            # 分类字段：唯一值和分布
-            if dtype in ['object', 'category'] and '时间' not in col_info['semantic_type'] and '日期' not in col_info['semantic_type']:
-                unique_vals = col_data.dropna().unique().tolist()
-                col_info["unique_values"] = [str(v) for v in unique_vals[:50]]
-                value_counts = col_data.value_counts()
-                col_info["value_distribution"] = (
-                    f"共{len(unique_vals)}个唯一值" if len(value_counts) <= 10
-                    else f"共{len(unique_vals)}个唯一值，前5个: {', '.join([str(v) for v in value_counts.head(5).index])}"
-                )
+            # 判断字段类型（优先根据语义类型判断，避免数据类型误判）
+            semantic_type = col_info['semantic_type']
+            is_numeric_by_dtype = dtype in ['int64', 'float64', 'int32', 'float32']
+            is_numeric_by_semantic = '指标' in semantic_type or '数值' in semantic_type
             
-            # 数值字段：统计信息
-            elif dtype in ['int64', 'float64', 'int32', 'float32']:
-                numeric_data = col_data.dropna()
+            # 数值字段：优先根据语义类型判断，如果语义类型是数值指标，即使data_type是object也按数值处理
+            if is_numeric_by_dtype or is_numeric_by_semantic:
+                # 尝试转换为数值类型
+                if dtype in ['object', 'category']:
+                    try:
+                        numeric_data = pd.to_numeric(col_data, errors='coerce').dropna()
+                    except:
+                        numeric_data = col_data.dropna()
+                else:
+                    numeric_data = col_data.dropna()
+                
                 if len(numeric_data) > 0:
-                    col_info["statistics_summary"] = (
-                        f"范围: [{numeric_data.min():.2f}, {numeric_data.max():.2f}], "
-                        f"均值: {numeric_data.mean():.2f}, 中位数: {numeric_data.median():.2f}"
-                    )
+                    try:
+                        col_info["statistics_summary"] = (
+                            f"范围: [{numeric_data.min():.2f}, {numeric_data.max():.2f}], "
+                            f"均值: {numeric_data.mean():.2f}, 中位数: {numeric_data.median():.2f}"
+                        )
+                    except:
+                        # 如果转换失败，不添加统计信息
+                        pass
+            
+            # 分类字段：只列出出现次数最高的5个值，并合并统计信息
+            # 排除数值指标字段（即使data_type是object）
+            elif (
+                dtype in ['object', 'category'] 
+                and '时间' not in semantic_type 
+                and '日期' not in semantic_type
+                and '指标' not in semantic_type
+                and '数值' not in semantic_type
+            ):
+                value_counts = col_data.value_counts()
+                total_unique = len(col_data.dropna().unique())
+                
+                # 只取出现次数最高的5个值
+                top_5_values = value_counts.head(5)
+                col_info["unique_values_top5"] = [str(v) for v in top_5_values.index.tolist()]
+                
+                # 合并统计信息到 value_distribution（包含出现次数）
+                top_5_list = [f"{str(v)}({count}次)" for v, count in top_5_values.items()]
+                col_info["value_distribution"] = f"共{total_unique}个唯一值，出现次数前5: {', '.join(top_5_list)}"
             
             enriched_columns.append(col_info)
         
@@ -1347,12 +1504,9 @@ class ExcelAutoRegisterService:
             lines.append(f"  语义: {col.get('semantic_type')}")
             lines.append(f"  描述: {col.get('description')}")
             
-            if 'unique_values' in col:
-                unique_vals = col['unique_values']
-                if len(unique_vals) <= 10:
-                    lines.append(f"  可选值: {', '.join([str(v) for v in unique_vals])}")
-                else:
-                    lines.append(f"  可选值: {', '.join([str(v) for v in unique_vals[:10]])}... (共{len(unique_vals)}个)")
+            if 'unique_values_top5' in col:
+                unique_vals = col['unique_values_top5']
+                lines.append(f"  出现次数前5的值: {', '.join([str(v) for v in unique_vals])}")
             
             if 'statistics_summary' in col:
                 lines.append(f"  统计: {col['statistics_summary']}")
