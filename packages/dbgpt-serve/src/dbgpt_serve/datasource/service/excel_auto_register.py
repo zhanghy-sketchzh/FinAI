@@ -879,7 +879,6 @@ class ExcelAutoRegisterService:
             cached_info = self.cache_manager.get_cached_info(content_hash)
             if cached_info and os.path.exists(cached_info["db_path"]):
                 cached_schema_json = cached_info.get("data_schema_json")
-                suggested_questions = self._extract_suggested_questions(cached_schema_json) if cached_schema_json else []
                 
                 top_10_rows_raw = df.head(10).values.tolist()
                 top_10_rows = self._convert_to_json_serializable(top_10_rows_raw)
@@ -897,7 +896,6 @@ class ExcelAutoRegisterService:
                     "summary_prompt": cached_info["summary_prompt"],
                     "data_schema_json": cached_schema_json,
                     "top_10_rows": top_10_rows,
-                    "suggested_questions": suggested_questions,
                     "access_count": cached_info["access_count"],
                     "last_accessed": cached_info["last_accessed"],
                     "conv_uid": conv_uid
@@ -950,7 +948,6 @@ class ExcelAutoRegisterService:
         columns_info = [{"name": col[1], "type": col[2], "dtype": str(df[col[1]].dtype)} for col in columns]
         
         schema_understanding_json = self._generate_schema_understanding_with_llm(df, table_name)
-        suggested_questions = self._extract_suggested_questions(schema_understanding_json)
         summary_prompt = self._format_schema_as_prompt(schema_understanding_json, df, table_name)
         
         self.cache_manager.save_cache_info(
@@ -982,7 +979,6 @@ class ExcelAutoRegisterService:
             "summary_prompt": summary_prompt,
             "data_schema_json": schema_understanding_json,
             "top_10_rows": top_10_rows,
-            "suggested_questions": suggested_questions,
             "conv_uid": conv_uid
         }
     
@@ -1001,7 +997,13 @@ class ExcelAutoRegisterService:
             sample_data=df.head(3).to_dict('records')
         )
         
-        return self._call_llm_for_schema(prompt)
+        # 调用LLM生成简化的Schema JSON（只包含业务理解字段）
+        simplified_json = self._call_llm_for_schema(prompt)
+        
+        # 通过代码补充技术性字段，生成完整的Schema JSON
+        enriched_json = self._enrich_schema_json(simplified_json, df, table_name)
+        
+        return enriched_json
        
     
     def _prepare_er_info(self, df: pd.DataFrame, table_name: str) -> str:
@@ -1075,7 +1077,7 @@ class ExcelAutoRegisterService:
         categorical_distribution: str,
         sample_data: list
     ) -> str:
-        """构建Schema理解Prompt"""
+        """构建Schema理解Prompt（简化版，只生成必要的业务理解字段）"""
         
         # 转换sample_data中的特殊类型（如Timestamp）为可JSON序列化的格式
         def convert_to_serializable(obj):
@@ -1096,7 +1098,7 @@ class ExcelAutoRegisterService:
         serializable_sample_data = convert_to_serializable(sample_data)
         sample_data_str = json.dumps(serializable_sample_data, ensure_ascii=False, indent=2)
         
-        prompt = f"""你是一个数据分析专家，请分析以下数据表的结构和语义，生成详细的Schema理解JSON。
+        prompt = f"""你是一个数据分析专家，请分析以下数据表的结构和语义，生成Schema理解的JSON。
 
 === 数据表ER信息 ===
 {er_info}
@@ -1110,53 +1112,25 @@ class ExcelAutoRegisterService:
 === 数据示例（前3行） ===
 {sample_data_str}
 
-请生成一个JSON格式的Schema理解，包含以下信息：
+请生成一个简化的JSON格式，只包含需要业务理解的核心信息：
 
 1. **table_description**: 表的整体描述，说明这是什么数据，适合做什么分析
-2. **columns**: 每个字段的详细信息，包括：
-   - column_name: 字段名（需要使用能够被数据库识别的完整的字段名，不能删减）
-   - data_type: 数据类型（根据pandas dtype）
+2. **columns**: 每个字段的业务理解信息（只需要以下字段）：
+   - column_name: 字段名（必须使用完整的字段名，不能删减）
    - semantic_type: 语义类型（如：时间维度、地域维度、数值指标、分类维度、标识字段等）
    - description: 字段的业务含义和用途描述
-   - is_key_field: 是否是关键字段（主键、外键等）
-   - analysis_usage: 在数据分析中的典型用法（如：分组、筛选、聚合、排序等）
-   - unique_values: （仅分类字段）唯一值列表（最多50个）
-   - value_distribution: （仅分类字段）值分布的简要描述
-   - statistics_summary: （仅数值字段）统计信息的简要描述
-3. **recommended_dimensions**: 推荐的分析维度列表（哪些字段适合做分组、筛选）
-4. **recommended_metrics**: 推荐的分析指标列表（哪些字段适合做聚合计算）
-5. **common_analysis_scenarios**: 常见的分析场景列表（如：时间趋势分析、地域对比分析等）
-6. **suggested_questions**: 推荐问题列表（5-8个具体的、可执行的分析问题）
 
-请严格按照以下JSON格式输出：
+请严格按照以下JSON格式输出（只包含上述字段）：
 
 ```json
 {{
-  "table_name": "{table_name}",
   "table_description": "表的整体描述...",
   "columns": [
     {{
-      "column_name": "需要使用能够被数据库合法识别的完整的字段名",
-      "data_type": "int64/float64/object/datetime64等",
+      "column_name": "完整的字段名",
       "semantic_type": "时间维度/地域维度/数值指标/分类维度/标识字段",
-      "description": "详细的业务含义描述",
-      "is_key_field": true/false,
-      "analysis_usage": ["分组", "筛选", "聚合", "排序"],
-      "unique_values": ["值1", "值2", ...],  // 仅分类字段
-      "value_distribution": "分布描述",  // 仅分类字段
-      "statistics_summary": "统计描述"  // 仅数值字段
+      "description": "详细的业务含义描述"
     }}
-  ],
-  "recommended_dimensions": ["字段1", "字段2"],
-  "recommended_metrics": ["字段1", "字段2"],
-  "common_analysis_scenarios": [
-    "场景1: 描述",
-    "场景2: 描述"
-  ],
-  "suggested_questions": [
-    "问题1：具体的分析问题",
-    "问题2：具体的分析问题",
-    "..."
   ]
 }}
 ```
@@ -1164,11 +1138,7 @@ class ExcelAutoRegisterService:
 注意：
 1. 深入理解字段的业务含义，不要只是简单重复字段名
 2. semantic_type要准确，这对后续分析非常重要
-3. analysis_usage要具体，明确指出该字段在SQL中的典型用法
-4. 分类字段要包含所有唯一值（如果数量合理）
-5. 数值字段要总结统计特征
-6. 推荐的分析场景要实用且具体
-7. suggested_questions要具体、清晰，用户可以直接提问，涵盖不同分析角度（趋势、对比、排名、分布等）
+3. column_name必须与数据表中的字段名完全一致
 
 请直接输出JSON，不要有其他文字：
 """
@@ -1190,6 +1160,59 @@ class ExcelAutoRegisterService:
         except Exception as e:
             logger.debug(f"提取chunk文本失败: {e}")
         return ""
+    
+    def _enrich_schema_json(self, simplified_json: str, df: pd.DataFrame, table_name: str) -> str:
+        """通过代码补充技术性字段，生成完整的Schema JSON"""
+        try:
+            schema = json.loads(simplified_json)
+        except json.JSONDecodeError as e:
+            logger.error(f"解析简化JSON失败: {e}")
+            raise
+        
+        # 构建字段名映射
+        llm_map = {col.get('column_name'): col for col in schema.get('columns', []) if col.get('column_name')}
+        
+        # 构建完整的columns列表
+        enriched_columns = []
+        for col_name in df.columns:
+            col_data = df[col_name]
+            dtype = str(col_data.dtype)
+            llm_info = llm_map.get(col_name, {})
+            
+            col_info = {
+                "column_name": col_name,
+                "data_type": dtype,
+                "semantic_type": llm_info.get('semantic_type', '未知'),
+                "description": llm_info.get('description', f'{col_name}字段'),
+                "is_key_field": self._is_potential_key_field(col_name, col_data)
+            }
+            
+            # 分类字段：唯一值和分布
+            if dtype in ['object', 'category'] and '时间' not in col_info['semantic_type'] and '日期' not in col_info['semantic_type']:
+                unique_vals = col_data.dropna().unique().tolist()
+                col_info["unique_values"] = [str(v) for v in unique_vals[:50]]
+                value_counts = col_data.value_counts()
+                col_info["value_distribution"] = (
+                    f"共{len(unique_vals)}个唯一值" if len(value_counts) <= 10
+                    else f"共{len(unique_vals)}个唯一值，前5个: {', '.join([str(v) for v in value_counts.head(5).index])}"
+                )
+            
+            # 数值字段：统计信息
+            elif dtype in ['int64', 'float64', 'int32', 'float32']:
+                numeric_data = col_data.dropna()
+                if len(numeric_data) > 0:
+                    col_info["statistics_summary"] = (
+                        f"范围: [{numeric_data.min():.2f}, {numeric_data.max():.2f}], "
+                        f"均值: {numeric_data.mean():.2f}, 中位数: {numeric_data.median():.2f}"
+                    )
+            
+            enriched_columns.append(col_info)
+        
+        return json.dumps({
+            "table_name": table_name,
+            "table_description": schema.get('table_description', ''),
+            "columns": enriched_columns
+        }, ensure_ascii=False, indent=2)
     
     def _call_llm_for_schema(self, prompt: str) -> str:
         """调用LLM生成Schema JSON"""
@@ -1323,7 +1346,6 @@ class ExcelAutoRegisterService:
             lines.append(f"  类型: {col.get('data_type')}")
             lines.append(f"  语义: {col.get('semantic_type')}")
             lines.append(f"  描述: {col.get('description')}")
-            lines.append(f"  用法: {', '.join(col.get('analysis_usage', []))}")
             
             if 'unique_values' in col:
                 unique_vals = col['unique_values']
@@ -1334,14 +1356,6 @@ class ExcelAutoRegisterService:
             
             if 'statistics_summary' in col:
                 lines.append(f"  统计: {col['statistics_summary']}")
-        
-        lines.append(f"\n=== 分析建议 ===")
-        lines.append(f"推荐分析维度: {', '.join(schema.get('recommended_dimensions', []))}")
-        lines.append(f"推荐分析指标: {', '.join(schema.get('recommended_metrics', []))}")
-        
-        lines.append(f"\n=== 常见分析场景 ===")
-        for i, scenario in enumerate(schema.get('common_analysis_scenarios', []), 1):
-            lines.append(f"  {i}. {scenario}")
         
         return "\n".join(lines)
     
@@ -1411,17 +1425,6 @@ class ExcelAutoRegisterService:
         else:
             return str(obj)
     
-    def _extract_suggested_questions(self, schema_json: str) -> List[str]:
-        """从Schema JSON中提取推荐问题"""
-        try:
-            schema = json.loads(schema_json)
-            questions = schema.get('suggested_questions', [])
-            if isinstance(questions, list) and len(questions) > 0:
-                return questions
-            return []
-        except json.JSONDecodeError as e:
-            logger.error(f"解析Schema JSON失败: {e}")
-            return []
     
     
     

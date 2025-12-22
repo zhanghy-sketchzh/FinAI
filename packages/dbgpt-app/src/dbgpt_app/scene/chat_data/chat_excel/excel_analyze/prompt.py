@@ -92,13 +92,20 @@ Constraints:
 	1. Please fully understand the user's question and analyze it using DuckDB SQL. Return the analysis content according to the output format required below, with the SQL output in the corresponding SQL parameter
 	2. [MANDATORY] All column/table names containing Chinese characters, starting with digits, or containing special characters MUST be wrapped in double quotes! Examples: "category", "2022_sales", "customer_name", etc.
 	3. If Query rewrite results are provided above, please prioritize using the rewritten question and strictly follow the "relevant fields" and "analysis suggestions" to generate SQL
-	4. [IMPORTANT] Please select the most optimal way from the display methods given below for data rendering, and put the type name in the name parameter value of the required return format.
-	**Chart Selection Rules:**
-	- If the user explicitly requests "chart", "visualization", "graph", etc., you MUST prioritize chart types (such as response_bar_chart, response_line_chart, response_pie_chart) over response_table
-	- For categorical data comparison (e.g., regions, categories), prefer response_bar_chart (bar chart) or response_pie_chart (pie chart)
-	- For time series data, prefer response_line_chart (line chart) or response_area_chart (area chart)
-	- For proportion/distribution data, prefer response_pie_chart (pie chart) or response_donut_chart (donut chart)
-	- Only use response_table when there are many columns (>5) or many non-numeric columns
+	4. [CRITICAL] Chart visualization is STRONGLY PREFERRED over tables. Select the most optimal visualization method:
+	**Chart Selection Rules (Priority Order):**
+	- **DEFAULT**: Always prefer chart types over response_table unless explicitly unsuitable
+	- For categorical comparison (regions, categories, products): Use response_bar_chart or response_pie_chart
+	- For time series data (dates, months, years): Use response_line_chart or response_area_chart
+	- For proportion/distribution analysis: Use response_pie_chart or response_donut_chart
+	- For ranking/top N analysis: Use response_bar_chart (horizontal bars work best)
+	- For trend analysis: Use response_line_chart
+	- **ONLY use response_table when**: 
+	  * User explicitly requests "table" or "list"
+	  * Data has >6 columns with mostly text content
+	  * Data structure is inherently tabular (e.g., detailed records)
+	
+	**Display Order**: Results will be shown in this sequence: 1) Data summary, 2) Chart visualization, 3) SQL query
 	Available data display methods are: {display_type}
 	5. The table name to be used in the SQL is: {table_name}. Please check your generated SQL and do not use column names that are not in the data structure
 	6. Prioritize using data analysis methods to answer. If the user's question does not involve data analysis content, you can answer based on your understanding
@@ -260,42 +267,69 @@ SELECT * FROM (
 # ===== 可复用的约束条件块 =====
 _ANALYSIS_CONSTRAINTS_ZH = """
 表名：{table_name}
-列名规则：中文/数字开头/特殊字符必须用双引号
-图表选择：分类对比用bar/pie，时序用line/area，多列(>5)用table
+列名规则：中文/数字开头/特殊字符必须用双引号;不要使用 UNION / UNION ALL，如需多个结果请分别查询；时间戳处理使用 to_timestamp() 而非直接 CAST；注释行必须单独成行，不要放在 SQL 语句的同一行
+图表优先：默认使用图表，分类对比用bar/pie，时序用line/area，仅明细记录用table
 可用方式：{display_type}
+展示顺序：数据摘要 → 图表可视化 → SQL查询
 """
 
 _ANALYSIS_CONSTRAINTS_EN = """
 Table: {table_name}
 Column rules: Chinese/digit-starting/special chars need double quotes
-Chart selection: categorical use bar/pie, time-series use line/area, many columns(>5) use table
+Chart priority: Default to charts, categorical use bar/pie, time-series use line/area, only detailed records use table
 Available types: {display_type}
+Display order: Data summary → Chart visualization → SQL query
 """
 
 # ===== 可复用的示例块 =====
 _EXAMPLES_ZH = """
-【示例】：
-user: 分析各地区销售
-assistant: 为您分析各地区销售：
-<api-call><name>response_bar_chart</name><args><sql>
-SELECT "地区", SUM("销售额") AS "总销售额"
+
+
+【示例 - 时间趋势，使用折线图】：
+user: 看一下销售趋势
+assistant: 为您展示销售趋势变化：
+<api-call><name>response_line_chart</name><args><sql>
+SELECT "日期", SUM("销售额") AS "销售额"
 FROM data_analysis_table
-WHERE "地区" IS NOT NULL
-GROUP BY "地区"
-ORDER BY "总销售额" DESC;
+WHERE "日期" IS NOT NULL
+GROUP BY "日期"
+ORDER BY "日期";
 </sql></args></api-call>
+
 """
 
 _EXAMPLES_EN = """
-【Example】：
+【Example 1 - Categorical comparison, use bar chart】：
 user: Analyze sales by region
-assistant: Analyzing sales by region:
+assistant: Analyzing regional sales performance:
 <api-call><name>response_bar_chart</name><args><sql>
 SELECT "region", SUM("sales") AS "total_sales"
 FROM data_analysis_table
 WHERE "region" IS NOT NULL
 GROUP BY "region"
 ORDER BY "total_sales" DESC;
+</sql></args></api-call>
+
+【Example 2 - Time trend, use line chart】：
+user: Show sales trend
+assistant: Displaying sales trend:
+<api-call><name>response_line_chart</name><args><sql>
+SELECT "date", SUM("sales") AS "sales"
+FROM data_analysis_table
+WHERE "date" IS NOT NULL
+GROUP BY "date"
+ORDER BY "date";
+</sql></args></api-call>
+
+【Example 3 - Proportion analysis, use pie chart】：
+user: Sales proportion by category
+assistant: Analyzing sales proportion by category:
+<api-call><name>response_pie_chart</name><args><sql>
+SELECT "category", SUM("sales") AS "sales"
+FROM data_analysis_table
+WHERE "category" IS NOT NULL
+GROUP BY "category"
+ORDER BY "sales" DESC;
 </sql></args></api-call>
 """
 
@@ -306,7 +340,9 @@ _USER_PROMPT_TEMPLATE_ZH = """
 【输出要求】：
 1. 简短引导文本(1-2句话)
 2. <api-call></api-call>代码块(包含SQL)
-3. 禁止：冗长说明、多个api-call、提前给结论、在api-call外输出SQL
+3. 优先使用图表类型(bar/line/pie/area)，避免过度使用table
+4. 禁止：冗长说明、多个api-call、提前给结论、在api-call外输出SQL
+5. 展示顺序：数据摘要 → 图表可视化 → SQL查询
 
 【数据表结构】
 {table_schema}
@@ -333,7 +369,9 @@ _USER_PROMPT_TEMPLATE_EN = """
 【Output Requirements】:
 1. Brief guide text (1-2 sentences)
 2. <api-call></api-call> block (with SQL)
-3. Prohibited: lengthy explanations, multiple api-calls, premature conclusions, SQL outside api-call
+3. Prioritize chart types (bar/line/pie/area), avoid overusing table
+4. Prohibited: lengthy explanations, multiple api-calls, premature conclusions, SQL outside api-call
+5. Display order: Data summary → Chart visualization → SQL query
 
 【Data Table Structure】
 {table_schema}
@@ -438,8 +476,20 @@ DuckDB SQL数据分析回答用户的问题。
 	分析内容按下面要求的输出格式返回，SQL 请输出在对应的 SQL 参数中
 	2.【强制要求】所有包含中文、以数字开头、或包含特殊字符的列名/表名，必须使用双引号包裹！\
 	3.如果上面提供了Query改写结果，请优先使用改写后的问题，并严格按照"相关字段"和"分析建议"来生成SQL
-	4.【重要】请从如下给出的展示方式种选择最优的一种用以进行数据渲染，\
-	将类型名称放入返回要求格式的name参数值中。\
+	4.【关键】强烈建议优先使用图表可视化，而非表格展示。请选择最优的可视化方式：
+	**图表选择规则（优先级顺序）：**
+	- **默认原则**：除非明确不适合，否则始终优先选择图表类型而非 response_table
+	- 分类对比（地区、类别、产品）：使用 response_bar_chart 或 response_pie_chart
+	- 时间序列（日期、月份、年份）：使用 response_line_chart 或 response_area_chart
+	- 占比/分布分析：使用 response_pie_chart 或 response_donut_chart
+	- 排名/Top N分析：使用 response_bar_chart（横向柱状图效果最佳）
+	- 趋势分析：使用 response_line_chart
+	- **仅在以下情况使用 response_table**：
+	  * 用户明确要求"表格"或"列表"
+	  * 数据有>6列且多为文本内容
+	  * 数据结构本身就是表格形式（如明细记录）
+	
+	**展示顺序**：结果将按以下顺序展示：1) 数据摘要，2) 图表可视化，3) SQL查询
 	可用数据展示方式如下: {display_type}
 	5.SQL中需要使用的表名是: {table_name},请检查你生成的sql，\
 	不要使用没在数据结构中的列名
