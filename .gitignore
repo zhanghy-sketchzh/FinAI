@@ -191,5 +191,5 @@ thirdparty
 configs/my
 .devcontainer/dev.toml
 test_docs
-configs
+configs/
 packages/pilot

@@ -33,108 +33,160 @@ def excel_colunm_format(old_name: str) -> str:
 def add_quotes_to_chinese_columns(sql, column_names=[]):
     """
     为SQL中需要加引号的列名添加引号
-    
+
     通用规则：
     1. 包含中文字符
     2. 以数字开头
     3. 是SQL关键字但被用作列名
-    
+
     使用正则表达式方式，更可靠和通用
     """
     import re
-    
+
     # SQL关键字列表（常见的）
     SQL_KEYWORDS = {
-        'SELECT', 'FROM', 'WHERE', 'GROUP', 'ORDER', 'BY', 'AS', 'JOIN', 
-        'ON', 'AND', 'OR', 'NOT', 'IN', 'BETWEEN', 'LIKE', 'IS', 'NULL',
-        'INNER', 'LEFT', 'RIGHT', 'OUTER', 'CROSS', 'UNION', 'ALL',
-        'INSERT', 'UPDATE', 'DELETE', 'CREATE', 'ALTER', 'DROP',
-        'SUM', 'COUNT', 'AVG', 'MAX', 'MIN', 'CASE', 'WHEN', 'THEN', 'ELSE', 'END',
-        'ROW_NUMBER', 'PARTITION', 'OVER', 'DISTINCT', 'HAVING', 'LIMIT', 'OFFSET',
-        'WITH', 'CTE', 'DESC', 'ASC', 'RN'
+        "SELECT",
+        "FROM",
+        "WHERE",
+        "GROUP",
+        "ORDER",
+        "BY",
+        "AS",
+        "JOIN",
+        "ON",
+        "AND",
+        "OR",
+        "NOT",
+        "IN",
+        "BETWEEN",
+        "LIKE",
+        "IS",
+        "NULL",
+        "INNER",
+        "LEFT",
+        "RIGHT",
+        "OUTER",
+        "CROSS",
+        "UNION",
+        "ALL",
+        "INSERT",
+        "UPDATE",
+        "DELETE",
+        "CREATE",
+        "ALTER",
+        "DROP",
+        "SUM",
+        "COUNT",
+        "AVG",
+        "MAX",
+        "MIN",
+        "CASE",
+        "WHEN",
+        "THEN",
+        "ELSE",
+        "END",
+        "ROW_NUMBER",
+        "PARTITION",
+        "OVER",
+        "DISTINCT",
+        "HAVING",
+        "LIMIT",
+        "OFFSET",
+        "WITH",
+        "CTE",
+        "DESC",
+        "ASC",
+        "RN",
     }
-    
+
     def needs_quotes(identifier):
         """判断标识符是否需要加引号"""
         if not identifier or identifier.startswith('"'):
             return False
-        
+
         # 已经加了引号的，跳过
         if identifier.startswith('"') and identifier.endswith('"'):
             return False
-        
+
         # 数字、字符串字面量、函数调用，跳过
         if identifier.isdigit() or identifier.startswith("'"):
             return False
-        
+
         # SQL关键字（大小写不敏感），跳过
         if identifier.upper() in SQL_KEYWORDS:
             return False
-        
+
         # 规则1: 包含中文
-        if any('\u4e00' <= char <= '\u9fa5' for char in identifier):
+        if any("\u4e00" <= char <= "\u9fa5" for char in identifier):
             return True
-        
+
         # 规则2: 以数字开头
         if identifier[0].isdigit():
             return True
-        
+
         return False
-    
+
     # 1. 先处理 AS 别名（特殊处理，因为它们可能以数字开头）
-    as_pattern = r'\bAS\s+([a-zA-Z_\u4e00-\u9fa5][a-zA-Z0-9_\u4e00-\u9fa5]*|\d[a-zA-Z0-9_\u4e00-\u9fa5]+)'
-    sql = re.sub(as_pattern, lambda m: f'AS "{m.group(1)}"' if needs_quotes(m.group(1)) else m.group(0), sql, flags=re.IGNORECASE)
-    
+    as_pattern = r"\bAS\s+([a-zA-Z_\u4e00-\u9fa5][a-zA-Z0-9_\u4e00-\u9fa5]*|\d[a-zA-Z0-9_\u4e00-\u9fa5]+)"
+    sql = re.sub(
+        as_pattern,
+        lambda m: f'AS "{m.group(1)}"' if needs_quotes(m.group(1)) else m.group(0),
+        sql,
+        flags=re.IGNORECASE,
+    )
+
     # 2. 处理点号前后的标识符（表名.列名）
-    dot_pattern = r'([a-zA-Z_\u4e00-\u9fa5][a-zA-Z0-9_\u4e00-\u9fa5]*|\d[a-zA-Z0-9_\u4e00-\u9fa5]+)\.([a-zA-Z_\u4e00-\u9fa5][a-zA-Z0-9_\u4e00-\u9fa5]*|\d[a-zA-Z0-9_\u4e00-\u9fa5]+)'
-    
+    dot_pattern = r"([a-zA-Z_\u4e00-\u9fa5][a-zA-Z0-9_\u4e00-\u9fa5]*|\d[a-zA-Z0-9_\u4e00-\u9fa5]+)\.([a-zA-Z_\u4e00-\u9fa5][a-zA-Z0-9_\u4e00-\u9fa5]*|\d[a-zA-Z0-9_\u4e00-\u9fa5]+)"
+
     def replace_dot_notation(match):
         table_or_alias = match.group(1)
         column = match.group(2)
-        
+
         # 表名/别名加引号
         if needs_quotes(table_or_alias):
             table_or_alias = f'"{table_or_alias}"'
-        
+
         # 列名加引号
         if needs_quotes(column):
             column = f'"{column}"'
-        
-        return f'{table_or_alias}.{column}'
-    
+
+        return f"{table_or_alias}.{column}"
+
     sql = re.sub(dot_pattern, replace_dot_notation, sql)
-    
+
     # 3. ✅ 关键修复：处理所有独立的标识符（包括函数参数内的列名）
     # 匹配标识符：字母/数字/下划线/中文组成，后面不是左括号（避免匹配函数名）
     # 同时支持以数字开头的列名（如 2022_销售额）
     identifier_pattern = r'(?<!")(?<!\w)([a-zA-Z_\u4e00-\u9fa5][\w\u4e00-\u9fa5]*|\d[\w\u4e00-\u9fa5]+)(?!\()(?!")'
-    
+
     def replace_identifier(match):
         identifier = match.group(1)
         if needs_quotes(identifier):
             return f'"{identifier}"'
         return identifier
-    
+
     # 分段处理SQL，避免在字符串内部替换
     result_parts = []
     in_string = False
     string_char = None
     i = 0
     current_segment = []
-    
+
     while i < len(sql):
         char = sql[i]
-        
+
         # 检测字符串边界
-        if char in ("'", '"') and (i == 0 or sql[i-1] != '\\'):
+        if char in ("'", '"') and (i == 0 or sql[i - 1] != "\\"):
             if not in_string:
                 # 进入字符串前，处理之前积累的非字符串部分
                 if current_segment:
-                    segment_sql = ''.join(current_segment)
-                    segment_sql = re.sub(identifier_pattern, replace_identifier, segment_sql)
+                    segment_sql = "".join(current_segment)
+                    segment_sql = re.sub(
+                        identifier_pattern, replace_identifier, segment_sql
+                    )
                     result_parts.append(segment_sql)
                     current_segment = []
-                
+
                 in_string = True
                 string_char = char
                 result_parts.append(char)
@@ -149,17 +201,17 @@ def add_quotes_to_chinese_columns(sql, column_names=[]):
             result_parts.append(char)
         else:
             current_segment.append(char)
-        
+
         i += 1
-    
+
     # 处理最后的非字符串部分
     if current_segment:
-        segment_sql = ''.join(current_segment)
+        segment_sql = "".join(current_segment)
         segment_sql = re.sub(identifier_pattern, replace_identifier, segment_sql)
         result_parts.append(segment_sql)
-    
-    result_sql = ''.join(result_parts)
-    
+
+    result_sql = "".join(result_parts)
+
     return result_sql
 
 
@@ -282,7 +334,11 @@ def read_direct(
         error_msg = str(e)
         logger.warning(f"Error while reading file with {load_func}: {error_msg}")
         # 如果是类型转换错误或解析错误，直接fallback到pandas
-        if "Could not convert" in error_msg or "Failed to parse" in error_msg or "Invalid Input" in error_msg:
+        if (
+            "Could not convert" in error_msg
+            or "Failed to parse" in error_msg
+            or "Invalid Input" in error_msg
+        ):
             logger.info("检测到类型转换错误，使用pandas读取（支持混合类型数据）")
         return read_from_df(db, file_path, file_name, table_name)
 
@@ -306,7 +362,9 @@ class ExcelReader:
         self.conv_uid = conv_uid
         # connect DuckDB
 
-        db_exists = os.path.exists(database_name) if database_name != ":memory:" else False
+        db_exists = (
+            os.path.exists(database_name) if database_name != ":memory:" else False
+        )
 
         self.db = duckdb.connect(database=database_name, read_only=False)
 
@@ -374,7 +432,7 @@ class ExcelReader:
     def get_sample_data(self, table_name: str, sample_size: int = 2):
         """
         获取高质量的采样数据
-        
+
         优化策略：使用LIMIT代替USING SAMPLE，确保：
         1. 数据有效性（不会采到空行或表头）
         2. 数据代表性（按顺序取前N行）
@@ -572,7 +630,7 @@ AND dc.schema_name = 'main';
         return self._run_sql(
             "SELECT extension_name, installed, description FROM duckdb_extensions();"
         )
-    
+
     def get_table_size(self, table_name: str) -> dict:
         """
         获取表的行数和列数
@@ -582,15 +640,15 @@ AND dc.schema_name = 'main';
             # 获取列数
             columns_result = self.db.sql(f"DESCRIBE {table_name}").fetchall()
             column_count = len(columns_result)
-            
+
             # 获取行数
             row_count = self.db.sql(f"SELECT COUNT(*) FROM {table_name}").fetchone()[0]
-            
+
             return {"row_count": row_count, "column_count": column_count}
         except Exception as e:
             logger.error(f"Error getting table size: {e}")
             return {"row_count": 0, "column_count": 0}
-    
+
     def get_unique_values(self, table_name: str, max_unique_values: int = 100) -> dict:
         """
         获取表中列的唯一值（仅非数值列，且唯一值数量<=max_unique_values）
@@ -598,22 +656,32 @@ AND dc.schema_name = 'main';
         这对LLM理解分类数据非常有帮助
         """
         unique_values = {}
-        
+
         try:
             # 获取所有列及其类型
             columns_result = self.db.sql(f"DESCRIBE {table_name}").fetchall()
-            
+
             for column_info in columns_result:
                 column_name = column_info[0]
                 column_type = column_info[1].upper()
-                
+
                 # 只对非数值类型的列获取唯一值
-                if not any(numeric_type in column_type for numeric_type in ['INT', 'DOUBLE', 'FLOAT', 'DECIMAL', 'NUMERIC', 'BIGINT']):
+                if not any(
+                    numeric_type in column_type
+                    for numeric_type in [
+                        "INT",
+                        "DOUBLE",
+                        "FLOAT",
+                        "DECIMAL",
+                        "NUMERIC",
+                        "BIGINT",
+                    ]
+                ):
                     try:
                         # 获取唯一值数量
                         count_query = f'SELECT COUNT(DISTINCT "{column_name}") FROM "{table_name}"'
                         unique_count = self.db.sql(count_query).fetchone()[0]
-                        
+
                         # 只有唯一值数量不超过阈值时才获取
                         if unique_count <= max_unique_values and unique_count > 0:
                             # 获取所有唯一值
@@ -621,14 +689,16 @@ AND dc.schema_name = 'main';
                             result = self.db.sql(values_query).fetchall()
                             unique_values[column_name] = [row[0] for row in result]
                     except Exception as e:
-                        logger.warning(f"Error getting unique values for column {column_name}: {e}")
+                        logger.warning(
+                            f"Error getting unique values for column {column_name}: {e}"
+                        )
                         continue
-                        
+
         except Exception as e:
             logger.error(f"Error in get_unique_values: {e}")
-        
+
         return unique_values
-    
+
     def get_table_info_description(self, table_name: str) -> str:
         """
         生成表的详细描述信息，包括表大小、列信息和唯一值
@@ -637,44 +707,51 @@ AND dc.schema_name = 'main';
         try:
             # 获取表大小
             table_size = self.get_table_size(table_name)
-            
+
             # 获取列信息
             columns_result = self.db.sql(f"DESCRIBE {table_name}").fetchall()
-            
+
             # 获取唯一值
             unique_values = self.get_unique_values(table_name)
-            
+
             # 构建描述
             description = f"表名: {table_name}\n"
             description += f"数据规模: {table_size['row_count']} 行 × {table_size['column_count']} 列\n\n"
             description += "列信息:\n"
-            
+
             for column_info in columns_result:
                 column_name = column_info[0]
                 column_type = column_info[1]
                 is_nullable = "YES" if column_info[2] == "YES" else "NO"
-                
+
                 column_desc = f"  • {column_name} ({column_type})"
                 if is_nullable == "NO":
                     column_desc += " [NOT NULL]"
                 description += column_desc + "\n"
-            
+
             # 添加唯一值信息
             if unique_values:
                 description += "\n分类列的可选值（对数据分析很重要）:\n"
                 for column, values in unique_values.items():
                     # 限制显示的值数量
                     if len(values) <= 20:
-                        values_str = ", ".join([f"'{v}'" if isinstance(v, str) else str(v) for v in values])
+                        values_str = ", ".join(
+                            [f"'{v}'" if isinstance(v, str) else str(v) for v in values]
+                        )
                     else:
                         preview_values = values[:20]
-                        values_str = ", ".join([f"'{v}'" if isinstance(v, str) else str(v) for v in preview_values])
+                        values_str = ", ".join(
+                            [
+                                f"'{v}'" if isinstance(v, str) else str(v)
+                                for v in preview_values
+                            ]
+                        )
                         values_str += f" ... (共 {len(values)} 个值)"
-                    
+
                     description += f"  • {column}: {values_str}\n"
-            
+
             return description
-            
+
         except Exception as e:
             logger.error(f"Error generating table description: {e}")
             return f"Error: {str(e)}"

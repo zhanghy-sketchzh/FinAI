@@ -24,10 +24,10 @@ logger = logging.getLogger(__name__)
 def convert_to_json_serializable(obj):
     """
     递归转换对象为可JSON序列化的格式
-    
+
     Args:
         obj: 要转换的对象
-    
+
     Returns:
         可JSON序列化的对象
     """
@@ -58,26 +58,28 @@ class ExcelSchemaEntity(Model):
     file_path = Column(String(512), nullable=True, comment="excel file path")
     table_name = Column(String(255), nullable=False, comment="table name in database")
     db_path = Column(String(512), nullable=True, comment="database path")
-    
+
     # 基本信息
     row_count = Column(Integer, nullable=True, comment="total row count")
     column_count = Column(Integer, nullable=True, comment="total column count")
     top_10_rows = Column(Text, nullable=True, comment="top 10 rows data, JSON format")
-    
+
     # 数据描述
     data_description = Column(Text, nullable=True, comment="data description from LLM")
     data_schema_json = Column(Text, nullable=True, comment="data schema JSON")
-    
+
     # 推荐问题
-    suggested_questions = Column(Text, nullable=True, comment="suggested questions, JSON format")
-    
+    suggested_questions = Column(
+        Text, nullable=True, comment="suggested questions, JSON format"
+    )
+
     # 元数据
     user_id = Column(String(128), index=True, nullable=True, comment="User id")
     user_name = Column(String(128), index=True, nullable=True, comment="User name")
     sys_code = Column(String(128), index=True, nullable=True, comment="System code")
     gmt_created = Column(DateTime, default=datetime.now, comment="Record creation time")
     gmt_modified = Column(DateTime, default=datetime.now, comment="Record update time")
-    
+
     __table_args__ = (
         UniqueConstraint("conv_uid", name="uk_conv_uid"),
         Index("idx_file_name", "file_name"),
@@ -147,7 +149,7 @@ class ExcelSchemaDao(BaseDao):
             # 转换 top_10_rows 为可JSON序列化的格式
             serializable_top_10_rows = convert_to_json_serializable(top_10_rows)
             top_10_rows_json = json.dumps(serializable_top_10_rows, ensure_ascii=False)
-            
+
             suggested_questions_json = (
                 json.dumps(suggested_questions, ensure_ascii=False)
                 if suggested_questions
@@ -249,4 +251,3 @@ class ExcelSchemaDao(BaseDao):
             result["suggested_questions"] = []
 
         return result
-
