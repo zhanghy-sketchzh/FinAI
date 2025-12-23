@@ -12,7 +12,7 @@ export const ChatZh: Resources['translation'] = {
   delete_chat_confirm: '您确认要删除会话吗？',
   input_tips: '可以问我任何问题，shift + Enter 换行',
   sent: '发送',
-  answer_again: '重新回答',
+  clear_all_caches: '清除所有缓存',
   feedback_tip: '描述一下具体问题或更优的答案',
   thinking: '正在思考中',
   stop_replying: '停止回复',

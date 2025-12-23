@@ -161,6 +161,10 @@ export const clearChatHistory = (conUid: string) => {
   return POST<null, Record<string, string>>(`/api/v1/chat/dialogue/clear?con_uid=${conUid}`);
 };
 
+export const clearAllCaches = () => {
+  return POST<null, { message: string; output: string }>(`/api/v1/chat/dialogue/clear_all_caches`);
+};
+
 /** Menu */
 export const delDialogue = (conv_uid: string) => {
   return POST(`/api/v1/chat/dialogue/delete?con_uid=${conv_uid}`);

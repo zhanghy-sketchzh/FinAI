@@ -76,7 +76,7 @@ class ExcelCacheManager:
     @staticmethod
     def calculate_excel_hash(df: pd.DataFrame, filename: str) -> str:
         """
-        计算 Excel 的内容哈希值
+        计算 Excel 的内容哈希值（基于DataFrame，用于向后兼容）
         
         Args:
             df: DataFrame 对象
@@ -94,6 +94,27 @@ class ExcelCacheManager:
         content = "\n".join(content_parts)
         
         return hashlib.sha256(content.encode('utf-8')).hexdigest()
+    
+    @staticmethod
+    def calculate_file_hash(file_path: str) -> str:
+        """
+        计算文件级别的哈希值（基于文件内容）
+        
+        Args:
+            file_path: Excel文件路径
+        
+        Returns:
+            SHA256 哈希值
+        """
+        sha256_hash = hashlib.sha256()
+        
+        # 读取文件内容并计算哈希
+        with open(file_path, "rb") as f:
+            # 分块读取，避免大文件占用过多内存
+            for byte_block in iter(lambda: f.read(4096), b""):
+                sha256_hash.update(byte_block)
+        
+        return sha256_hash.hexdigest()
     
     def get_cached_info(self, content_hash: str) -> Optional[Dict]:
         """
@@ -995,23 +1016,40 @@ class ExcelAutoRegisterService:
         conv_uid: str = None
     ) -> Dict:
         """处理Excel文件，自动注册到数据源"""
-        df_raw = pd.read_excel(excel_file_path, header=None)
-        
-        df = self._process_multi_level_header(df_raw, excel_file_path)
-        
         if original_filename is None:
             original_filename = Path(excel_file_path).name
         
-        content_hash = self.cache_manager.calculate_excel_hash(df, original_filename)
+        # 使用文件级别的哈希（在读取Excel前计算）
+        content_hash = self.cache_manager.calculate_file_hash(excel_file_path)
+        logger.debug(f"文件哈希: {content_hash[:16]}... (文件: {original_filename})")
         
+        # 检查缓存（在读取Excel和处理表头之前）
         if not force_reimport:
             cached_info = self.cache_manager.get_cached_info(content_hash)
             if cached_info and os.path.exists(cached_info["db_path"]):
+                # 缓存命中，直接返回（无需读取Excel和处理表头）
                 cached_schema_json = cached_info.get("data_schema_json")
                 
-                top_10_rows_raw = df.head(10).values.tolist()
-                top_10_rows = self._convert_to_json_serializable(top_10_rows_raw)
+                # 为了返回top_10_rows，需要从数据库读取
+                # 这比重新读取和处理Excel要快得多
+                try:
+                    conn = sqlite3.connect(cached_info["db_path"])
+                    cursor = conn.cursor()
+                    cursor.execute(f"SELECT * FROM {cached_info['table_name']} LIMIT 10")
+                    rows = cursor.fetchall()
                     
+                    # 获取列名
+                    cursor.execute(f"PRAGMA table_info('{cached_info['table_name']}')")
+                    columns = [col[1] for col in cursor.fetchall()]
+                    conn.close()
+                    
+                    # 转换为字典列表
+                    top_10_rows = [dict(zip(columns, row)) for row in rows]
+                    top_10_rows = self._convert_to_json_serializable(top_10_rows)
+                except Exception as e:
+                    logger.warning(f"从数据库读取top_10_rows失败: {e}，将返回空列表")
+                    top_10_rows = []
+ 
                 return {
                     "status": "cached",
                     "message": "使用缓存数据",
@@ -1029,6 +1067,11 @@ class ExcelAutoRegisterService:
                     "last_accessed": cached_info["last_accessed"],
                     "conv_uid": conv_uid
                 }
+        
+        # 没有缓存或强制重新导入，需要完整处理
+        logger.info(f"📝 开始处理Excel文件（需要识别表头）: {original_filename}")
+        df_raw = pd.read_excel(excel_file_path, header=None)
+        df = self._process_multi_level_header(df_raw, excel_file_path)
         
         if table_name is None:
             base_name = Path(original_filename).stem

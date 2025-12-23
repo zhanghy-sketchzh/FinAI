@@ -565,8 +565,12 @@ def list_chat_history():
             conn.close()
 
 
-def clear_all_caches():
-    """清除所有缓存（Excel缓存、会话记录、临时文件等）"""
+def clear_all_caches(skip_confirm: bool = False):
+    """清除所有缓存（Excel缓存、会话记录、临时文件等）
+    
+    Args:
+        skip_confirm: 是否跳过确认提示（用于API调用）
+    """
     print("\n⚠️  警告: 此操作将清除以下所有缓存:")
     print("  1. Excel缓存数据库")
     print("  2. Excel数据库文件")
@@ -576,10 +580,11 @@ def clear_all_caches():
     print("  6. 文件服务器存储")
     print("  7. 模型缓存")
     
-    choice = input("\n⚠️  确认要清除所有缓存吗？(yes/no): ")
-    if choice.lower() != 'yes':
-        print("❌ 取消操作")
-        return
+    if not skip_confirm:
+        choice = input("\n⚠️  确认要清除所有缓存吗？(yes/no): ")
+        if choice.lower() != 'yes':
+            print("❌ 取消操作")
+            return
     
     # 清除Excel缓存
     print("\n1️⃣ 清除Excel缓存...")
@@ -686,7 +691,9 @@ if __name__ == "__main__":
         
         # 全部清除
         elif command == "clear-all":
-            clear_all_caches()
+            # 检查是否从stdin读取到'yes'（API调用场景）
+            skip_confirm = sys.stdin.readable() and not sys.stdin.isatty()
+            clear_all_caches(skip_confirm=skip_confirm)
         
         # 兼容旧命令
         elif command == "list":

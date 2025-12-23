@@ -1,8 +1,8 @@
-import { apiInterceptors, clearChatHistory } from '@/client/api';
+import { apiInterceptors, clearChatHistory, clearAllCaches } from '@/client/api';
 import { ChatContentContext } from '@/pages/chat';
-import { ClearOutlined, LoadingOutlined, PauseCircleOutlined, RedoOutlined } from '@ant-design/icons';
+import { ClearOutlined, DeleteOutlined, LoadingOutlined, PauseCircleOutlined, RedoOutlined } from '@ant-design/icons';
 import type { UploadFile } from 'antd';
-import { Spin, Tooltip } from 'antd';
+import { Modal, Spin, Tooltip, message } from 'antd';
 import classNames from 'classnames';
 import Image from 'next/image';
 import React, { useContext, useMemo, useState } from 'react';
@@ -50,6 +50,7 @@ const ToolsBar: React.FC<{
   const [fileList, setFileList] = useState<UploadFile[]>([]);
   const [loading, setLoading] = useState<boolean>(false);
   const [clsLoading, setClsLoading] = useState<boolean>(false);
+  const [clearAllLoading, setClearAllLoading] = useState<boolean>(false);
 
   // 通知父组件 loading 状态变化
   React.useEffect(() => {
@@ -80,29 +81,56 @@ const ToolsBar: React.FC<{
         },
       },
       {
-        tip: t('answer_again'),
-        icon: <RedoOutlined />,
-        can_use: !replyLoading && history.length > 0,
-        key: 'redo',
+        tip: t('clear_all_caches'),
+        icon: clearAllLoading ? (
+          <Spin spinning={clearAllLoading} indicator={<LoadingOutlined style={{ fontSize: 20 }} />} />
+        ) : (
+          <DeleteOutlined />
+        ),
+        can_use: !replyLoading,
+        key: 'clear_all_caches',
         onClick: async () => {
-          const lastHuman = history.filter(i => i.role === 'human')?.slice(-1)?.[0];
-          handleChat(lastHuman?.context || '', {
-            app_code: appInfo.app_code,
-            ...(paramKey.includes('temperature') && { temperature: temperatureValue }),
-            ...(paramKey.includes('max_new_tokens') && { max_new_tokens: maxNewTokensValue }),
-            ...(paramKey.includes('resource') && {
-              select_param:
-                typeof resourceValue === 'string'
-                  ? resourceValue
-                  : JSON.stringify(resourceValue) || currentDialogue.select_param,
-            }),
+          if (clearAllLoading) {
+            return;
+          }
+          
+          Modal.confirm({
+            title: '确认清除所有缓存？',
+            content: (
+              <div>
+                <p>此操作将清除以下所有数据：</p>
+                <ul style={{ paddingLeft: '20px', margin: '10px 0' }}>
+                  <li>Excel缓存数据库</li>
+                  <li>Excel数据库文件</li>
+                  <li>上传的Excel文件</li>
+                  <li>Excel聊天临时数据库</li>
+                  <li>所有会话历史记录</li>
+                  <li>文件服务器存储</li>
+                  <li>模型缓存</li>
+                </ul>
+                <p style={{ color: 'red', fontWeight: 'bold' }}>此操作不可撤销！</p>
+              </div>
+            ),
+            okText: '确认清除',
+            cancelText: '取消',
+            okType: 'danger',
+            onOk: async () => {
+              setClearAllLoading(true);
+              try {
+                await apiInterceptors(clearAllCaches());
+                message.success('所有缓存已清除成功！页面将在3秒后刷新...');
+                
+                // 3秒后刷新页面
+                setTimeout(() => {
+                  window.location.reload();
+                }, 3000);
+              } catch (error: any) {
+                message.error(`清除缓存失败: ${error?.message || '未知错误'}`);
+              } finally {
+                setClearAllLoading(false);
+              }
+            },
           });
-          setTimeout(() => {
-            scrollRef.current?.scrollTo({
-              top: scrollRef.current?.scrollHeight,
-              behavior: 'smooth',
-            });
-          }, 0);
         },
       },
       {

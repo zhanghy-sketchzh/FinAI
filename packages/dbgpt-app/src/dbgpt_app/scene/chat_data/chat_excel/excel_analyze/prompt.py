@@ -454,7 +454,6 @@ DuckDB SQL数据分析回答用户的问题。
 	  * 数据有>6列且多为文本内容
 	  * 数据结构本身就是表格形式（如明细记录）
 	
-	**展示顺序**：结果将按以下顺序展示：1) 数据摘要，2) 图表可视化，3) SQL查询
 	可用数据展示方式如下: {display_type}
 	5.SQL中需要使用的表名是: {table_name},请检查你生成的sql，\
 	不要使用没在数据结构中的列名
@@ -527,7 +526,7 @@ _DEFAULT_TEMPLATE = (
     _DEFAULT_TEMPLATE_EN if CFG.LANGUAGE == "en" else _DEFAULT_TEMPLATE_ZH
 )
 
-PROMPT_NEED_STREAM_OUT = False
+PROMPT_NEED_STREAM_OUT = True  # 启用流式输出，支持分阶段展示 Query改写 + SQL生成 + 最终结果
 
 # Temperature is a configuration hyperparameter that controls the randomness of
 # language model output.

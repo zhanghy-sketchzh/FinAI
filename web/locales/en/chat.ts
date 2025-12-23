@@ -5,7 +5,7 @@ export const ChatEn = {
   delete_chat_confirm: 'Are you sure you want to delete this chat?',
   input_tips: 'Ask me anything, Shift + Enter newline',
   sent: 'Sent',
-  answer_again: 'Answer again',
+  clear_all_caches: 'Clear all caches',
   feedback_tip: 'Describe specific questions or better answers',
   thinking: 'Thinking',
   stop_replying: 'Stop replying',

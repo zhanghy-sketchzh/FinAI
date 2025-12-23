@@ -1196,12 +1196,50 @@ class ChatExcel(BaseChat):
         self, text_output: bool = True, incremental: bool = False
     ):
         """
-        重写stream_call方法，不流式输出第一次LLM的引导性文本，
-        而是等到生成总结后再一次性输出最终结果
+        重写stream_call方法，分阶段流式输出中间结果，提升用户体验
+        
+        输出阶段：
+        1. Query改写结果（如果有）
+        2. SQL生成结果
+        3. 最终总结和图表
         
         支持SQL错误自动修复：如果SQL执行失败，会自动重试一次
         """
+        # ===== 先调用 generate_input_values 触发 Query 改写 =====
+        # 这样 _query_rewrite_result 才会被设置
+        print("🔍 [流式输出] 开始调用 generate_input_values")
+        input_values = await self.generate_input_values()
+        print(f"🔍 [流式输出] generate_input_values 完成，_query_rewrite_result 是否存在: {self._query_rewrite_result is not None}")
+        
+        # ===== 阶段1：输出Query改写结果 =====
+        if self._query_rewrite_result:
+            print("🔍 [流式输出] 准备输出 Query 改写结果")
+            thinking_stage1 = self._format_query_rewrite_thinking(self._query_rewrite_result)
+            if thinking_stage1:
+                # 包装成 vis-thinking 格式
+                from dbgpt.vis.tags.vis_thinking import VisThinking
+                vis_thinking_output = VisThinking().sync_display(content=thinking_stage1)
+                print(f"🔍 [流式输出] Query改写结果已格式化，长度: {len(vis_thinking_output)}")
+                print(f"🔍 [流式输出] 前100个字符: {vis_thinking_output[:100]}")
+                
+                if text_output:
+                    print("🔍 [流式输出] 以 text 模式输出 Query 改写结果")
+                    yield vis_thinking_output
+                else:
+                    print("🔍 [流式输出] 以 ModelOutput 模式输出 Query 改写结果")
+                    # 直接作为 text 输出，前端会识别 vis-thinking 格式
+                    stage1_output = ModelOutput.build(
+                        text=vis_thinking_output,
+                        error_code=0,
+                        finish_reason="continue"
+                    )
+                    yield stage1_output
+                print("✅ [流式输出] Query 改写结果已输出")
+        else:
+            print("⚠️ [流式输出] _query_rewrite_result 为空，跳过阶段1")
+        
         # 调用父类的_build_model_request获取payload
+        # 注意：这里会再次调用 generate_input_values，但由于已经执行过，会很快
         payload = await self._build_model_request()
         logger.info(f"payload request: \n{payload}")
         
@@ -1211,7 +1249,10 @@ class ChatExcel(BaseChat):
         # 使用非流式调用，直接获取完整结果（避免流式输出日志）
         full_output = await self.call_llm_operator(payload)
         
-        # 现在有了完整的输出，调用_handle_final_output生成总结
+        # ===== 阶段2：SQL生成（不输出，只用于后续分析） =====
+        # 注释：用户只需要看问题理解部分，SQL生成不作为独立阶段输出
+        
+        # ===== 阶段3：执行SQL并生成最终总结 =====
         if full_output:
             try:
                 ai_response_text, view_message = await self._handle_final_output(
@@ -1247,12 +1288,33 @@ class ChatExcel(BaseChat):
                                 )
                             return
                 
-                # 一次性输出最终结果（包含总结）
+                # 阶段3：输出最终结果（追加在之前的思考过程后面）
+                print("📊 [流式输出] 准备输出最终结果")
+                
+                # 构建完整的输出：思考过程 + 最终结果
+                final_output_parts = []
+                
+                # 只追加阶段1的思考过程（问题理解与分析）
+                if self._query_rewrite_result:
+                    thinking_stage1 = self._format_query_rewrite_thinking(self._query_rewrite_result)
+                    if thinking_stage1:
+                        from dbgpt.vis.tags.vis_thinking import VisThinking
+                        vis_thinking_output = VisThinking().sync_display(content=thinking_stage1)
+                        final_output_parts.append(vis_thinking_output)
+                
+                # 追加最终结果
+                final_output_parts.append(view_message)
+                
+                # 合并所有部分
+                complete_output = "\n\n".join(final_output_parts)
+                
+                print(f"📊 [流式输出] 完整输出包含 {len(final_output_parts)} 个部分")
+                
                 if text_output:
-                    yield view_message
+                    yield complete_output
                 else:
                     yield ModelOutput.build(
-                        view_message,
+                        complete_output,
                         "",
                         error_code=full_output.error_code if full_output else 0,
                         finish_reason=full_output.finish_reason if full_output else "stop",
@@ -1439,6 +1501,55 @@ class ChatExcel(BaseChat):
         except Exception as e:
             logger.debug(f"提取SQL失败: {e}")
         return None
+    
+    def _format_query_rewrite_thinking(self, rewrite_result: dict) -> str:
+        """
+        格式化Query改写结果为thinking格式，用于流式输出
+        
+        Args:
+            rewrite_result: Query改写结果
+            
+        Returns:
+            格式化后的thinking文本
+        """
+        try:
+            if not rewrite_result:
+                return ""
+            
+            thinking_parts = []
+            thinking_parts.append("问题理解与分析\n\n")
+            
+            # 改写后的问题
+            rewritten_query = rewrite_result.get('rewritten_query', '')
+            if rewritten_query:
+                thinking_parts.append(f"1.理解的问题：{rewritten_query}\n")
+            
+            # 相关字段
+            relevant_columns = rewrite_result.get('relevant_columns', [])
+            if relevant_columns:
+                thinking_parts.append("\n2.需要关注的字段：\n")
+                for col in relevant_columns[:5]:  # 最多显示5个
+                    col_name = col.get('column_name', '')
+                    usage = col.get('usage', '')
+                    if col_name:
+                        thinking_parts.append(f"  • {col_name}")
+                        if usage:
+                            thinking_parts.append(f"：{usage}")
+                        thinking_parts.append("\n")
+            
+            # 分析建议
+            analysis_suggestions = rewrite_result.get('analysis_suggestions', [])
+            if analysis_suggestions:
+                thinking_parts.append("\n3.分析思路：\n")
+                for i, suggestion in enumerate(analysis_suggestions[:5], 1):  # 最多显示3条
+                    thinking_parts.append(f"  • {suggestion}\n")
+            
+            return "".join(thinking_parts)
+            
+        except Exception as e:
+            logger.warning(f"格式化Query改写thinking失败: {e}")
+            return ""
+    
     
     async def _generate_result_summary(self, original_text: str, view_msg: str) -> str:
         """
