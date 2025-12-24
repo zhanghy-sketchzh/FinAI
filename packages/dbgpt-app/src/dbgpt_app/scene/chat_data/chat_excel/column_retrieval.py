@@ -2,12 +2,13 @@
 列检索模块 - 基于混合检索（BM25 + 向量）召回相关列信息
 """
 
-import json
-import numpy as np
-import jieba
-from rank_bm25 import BM25Okapi
 import heapq
-from typing import List, Dict, Any
+import json
+from typing import Any, Dict, List
+
+import jieba
+import numpy as np
+from rank_bm25 import BM25Okapi
 
 
 class ColumnRetrieval:
@@ -183,7 +184,7 @@ class ColumnRetrieval:
 
             # 是否关键字段
             if col.get("is_key_field"):
-                lines.append(f"  ⭐ 关键字段")
+                lines.append("  ⭐ 关键字段")
 
         return "\n".join(lines)
 

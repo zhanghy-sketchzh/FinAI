@@ -1,8 +1,8 @@
 import io
 import json
-import uuid
 import subprocess
 import sys
+import uuid
 from functools import cache
 from pathlib import Path
 from typing import List, Literal, Optional
@@ -326,7 +326,7 @@ async def export_all_messages(
 )
 async def clear_all_caches():
     """清除所有缓存（Excel缓存、会话记录、临时文件等）
-    
+
     Returns:
         Result: 操作结果
     """
@@ -335,14 +335,14 @@ async def clear_all_caches():
         project_root = Path(__file__).parent
         while project_root.name != "Finai" and project_root.parent != project_root:
             project_root = project_root.parent
-        
+
         if project_root.name != "Finai":
             return Result.failed(code="E0001", msg="无法找到项目根目录")
-        
+
         script_path = project_root / "clear_excel_cache.py"
         if not script_path.exists():
             return Result.failed(code="E0002", msg=f"清除缓存脚本不存在: {script_path}")
-        
+
         # 执行清除缓存脚本
         result = subprocess.run(
             [sys.executable, str(script_path), "clear-all"],
@@ -351,20 +351,16 @@ async def clear_all_caches():
             text=True,
             timeout=60,  # 60秒超时
             # 自动确认所有提示
-            input="yes\n" * 10
+            input="yes\n" * 10,
         )
-        
+
         if result.returncode == 0:
-            return Result.succ({
-                "message": "所有缓存已清除",
-                "output": result.stdout
-            })
+            return Result.succ({"message": "所有缓存已清除", "output": result.stdout})
         else:
             return Result.failed(
-                code="E0003",
-                msg=f"清除缓存失败: {result.stderr or result.stdout}"
+                code="E0003", msg=f"清除缓存失败: {result.stderr or result.stdout}"
             )
-    
+
     except subprocess.TimeoutExpired:
         return Result.failed(code="E0004", msg="清除缓存操作超时")
     except Exception as e:

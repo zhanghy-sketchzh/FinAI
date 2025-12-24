@@ -113,9 +113,7 @@ class ExcelUploadRequest(BaseModel):
     table_name: Optional[str] = Field(
         None, description="Target table name, auto-generated if not provided"
     )
-    force_reimport: bool = Field(
-        False, description="Force reimport even if cached"
-    )
+    force_reimport: bool = Field(False, description="Force reimport even if cached")
 
 
 class ExcelUploadResponse(BaseModel):
@@ -132,7 +130,9 @@ class ExcelUploadResponse(BaseModel):
     columns_info: list = Field(..., description="Column information")
     summary_prompt: Optional[str] = Field(None, description="Data understanding prompt")
     access_count: Optional[int] = Field(None, description="Access count (for cached)")
-    last_accessed: Optional[str] = Field(None, description="Last access time (for cached)")
+    last_accessed: Optional[str] = Field(
+        None, description="Last access time (for cached)"
+    )
 
 
 class ExcelInfoResponse(BaseModel):

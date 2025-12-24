@@ -69,7 +69,7 @@ def custom_ollama_generate_stream(
 
 class CustomOllamaLLMClient(ProxyLLMClient):
     """自定义 Ollama LLM 客户端，支持非标准的 Ollama API。
-    
+
     该客户端支持：
     1. 使用 /api/generate 端点（而不是 /api/chat）
     2. 自定义 Authorization header
@@ -89,7 +89,7 @@ class CustomOllamaLLMClient(ProxyLLMClient):
             model = "llama2"
         if not api_base:
             api_base = "http://localhost:11434/api/generate"
-        
+
         self._model = model
         self._api_base = self._resolve_env_vars(api_base)
         self._auth_token = auth_token or ""
@@ -132,12 +132,12 @@ class CustomOllamaLLMClient(ProxyLLMClient):
     def _convert_messages_to_prompt(self, messages: list) -> str:
         """将消息列表转换为单个 prompt 字符串。"""
         prompt_parts = []
-        
+
         for msg in messages:
             if isinstance(msg, dict):
                 role = msg.get("role", "user")
                 content = msg.get("content", "")
-                
+
                 # 处理列表格式的 content
                 if isinstance(content, list):
                     text_parts = []
@@ -147,7 +147,7 @@ class CustomOllamaLLMClient(ProxyLLMClient):
                         elif isinstance(item, str):
                             text_parts.append(item)
                     content = "".join(text_parts)
-                
+
                 # 根据角色添加前缀
                 if role == "system":
                     prompt_parts.append(f"System: {content}")
@@ -157,7 +157,7 @@ class CustomOllamaLLMClient(ProxyLLMClient):
                     prompt_parts.append(f"User: {content}")
             else:
                 prompt_parts.append(str(msg))
-        
+
         return "\n\n".join(prompt_parts)
 
     def sync_generate_stream(
@@ -167,33 +167,27 @@ class CustomOllamaLLMClient(ProxyLLMClient):
     ) -> Iterator[ModelOutput]:
         """同步流式生成响应。"""
         request = self.local_covert_message(request, message_converter)
-        
+
         # 转换消息为 prompt
         messages = request.to_common_messages()
         prompt = self._convert_messages_to_prompt(messages)
-        
+
         model = request.model or self._model
         # DeepSeek-R1 系列模型需要特殊处理推理内容
         is_reasoning_model = (
-            getattr(request.context, "is_reasoning_model", False) or
-            "deepseek-r1" in model.lower() or
-            "r1" in model.lower()
+            getattr(request.context, "is_reasoning_model", False)
+            or "deepseek-r1" in model.lower()
+            or "r1" in model.lower()
         )
-        
+
         # 构建请求头
-        headers = {
-            "Content-Type": "application/json"
-        }
+        headers = {"Content-Type": "application/json"}
         if self._auth_token:
             headers["Authorization"] = f"Bearer {self._auth_token}"
-        
+
         # 构建请求数据
-        data = {
-            "model": model,
-            "prompt": prompt,
-            "stream": True
-        }
-        
+        data = {"model": model, "prompt": prompt, "stream": True}
+
         logger.info(
             f"Custom Ollama API 请求 - 模型: {model}, "
             f"API地址: {self._api_base}, "
@@ -201,14 +195,10 @@ class CustomOllamaLLMClient(ProxyLLMClient):
             f"推理模型: {is_reasoning_model}"
         )
         logger.debug(f"请求数据: {json.dumps(data, ensure_ascii=False)[:200]}...")
-        
+
         try:
             with requests.post(
-                self._api_base,
-                json=data,
-                headers=headers,
-                stream=True,
-                timeout=60
+                self._api_base, json=data, headers=headers, stream=True, timeout=60
             ) as response:
                 if response.status_code != 200:
                     error_msg = f"HTTP {response.status_code}: {response.text}"
@@ -218,12 +208,12 @@ class CustomOllamaLLMClient(ProxyLLMClient):
                         error_code=-1,
                     )
                     return
-                
+
                 # 处理流式响应
                 full_content = ""
                 last_yielded_content = ""
                 last_yielded_thinking = ""
-                
+
                 # DeepSeek-R1 的推理模式标记
                 # 参考: https://github.com/deepseek-ai/DeepSeek-R1
                 reasoning_patterns = [
@@ -231,53 +221,57 @@ class CustomOllamaLLMClient(ProxyLLMClient):
                     {"start": "<reasoning>", "end": "</reasoning>"},
                     {"start": "<思考>", "end": "</思考>"},
                 ]
-                
+
                 for line in response.iter_lines():
                     if line:
                         try:
                             # 解析 JSON 响应
                             obj = json.loads(line)
-                            
+
                             # 提取响应文本
                             if "response" in obj:
                                 chunk_text = obj["response"]
                                 full_content += chunk_text
-                                
+
                                 # 解析推理内容（如果是推理模型）
                                 if is_reasoning_model:
                                     msg = parse_chat_message(
-                                        full_content, 
+                                        full_content,
                                         extract_reasoning=True,
-                                        reasoning_patterns=reasoning_patterns
+                                        reasoning_patterns=reasoning_patterns,
                                     )
                                 else:
                                     # 非推理模型，直接使用全部内容
                                     msg = parse_chat_message(
-                                        full_content, 
-                                        extract_reasoning=False
+                                        full_content, extract_reasoning=False
                                     )
-                                
+
                                 # 只在内容有变化时才输出
                                 # 这样可以避免重复输出相同的内容
                                 content_changed = msg.content != last_yielded_content
-                                thinking_changed = msg.reasoning_content != last_yielded_thinking
-                                
+                                thinking_changed = (
+                                    msg.reasoning_content != last_yielded_thinking
+                                )
+
                                 if content_changed or thinking_changed:
-                                    # 确保 text 参数始终有值，避免 "The content type is not text" 错误
-                                    # 即使只有 thinking 内容，也要提供一个空字符串作为 text
+                                    # 确保 text 参数始终有值
                                     text_to_yield = msg.content if msg.content else ""
-                                    thinking_to_yield = msg.reasoning_content if msg.reasoning_content else None
-                                    
+                                    thinking_to_yield = (
+                                        msg.reasoning_content
+                                        if msg.reasoning_content
+                                        else None
+                                    )
+
                                     yield ModelOutput.build(
                                         text=text_to_yield,
                                         thinking=thinking_to_yield,
                                         error_code=0,
-                                        is_reasoning_model=is_reasoning_model
+                                        is_reasoning_model=is_reasoning_model,
                                     )
-                                    
+
                                     last_yielded_content = msg.content
                                     last_yielded_thinking = msg.reasoning_content
-                            
+
                             # 检查是否完成
                             if obj.get("done", False):
                                 logger.info(
@@ -286,11 +280,13 @@ class CustomOllamaLLMClient(ProxyLLMClient):
                                     f"回答内容长度: {len(last_yielded_content)}"
                                 )
                                 break
-                                
+
                         except json.JSONDecodeError as e:
-                            logger.warning(f"JSON 解析失败: {line.decode('utf-8')}, 错误: {e}")
+                            logger.warning(
+                                f"JSON 解析失败: {line.decode('utf-8')}, 错误: {e}"
+                            )
                             continue
-                        
+
         except requests.RequestException as e:
             error_msg = f"请求异常: {str(e)}"
             logger.error(f"Custom Ollama API 请求异常: {error_msg}")
@@ -320,4 +316,3 @@ register_proxy_model_adapter(
         ),
     ],
 )
-

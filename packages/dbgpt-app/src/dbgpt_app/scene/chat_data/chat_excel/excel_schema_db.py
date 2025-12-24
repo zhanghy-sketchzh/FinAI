@@ -2,7 +2,7 @@
 
 import json
 import logging
-from datetime import datetime, date
+from datetime import date, datetime
 from typing import Any, Dict, List, Optional
 
 import pandas as pd
@@ -237,7 +237,7 @@ class ExcelSchemaDao(BaseDao):
         if entity.top_10_rows:
             try:
                 result["top_10_rows"] = json.loads(entity.top_10_rows)
-            except:
+            except Exception:
                 result["top_10_rows"] = []
         else:
             result["top_10_rows"] = []
@@ -245,7 +245,7 @@ class ExcelSchemaDao(BaseDao):
         if entity.suggested_questions:
             try:
                 result["suggested_questions"] = json.loads(entity.suggested_questions)
-            except:
+            except Exception:
                 result["suggested_questions"] = []
         else:
             result["suggested_questions"] = []

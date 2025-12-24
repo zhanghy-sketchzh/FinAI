@@ -2,15 +2,17 @@
 Query改写Agent - 参考format_sql/backend/agents/query_rewrite_assistant.py
 负责根据数据理解信息，补充完善用户问题，明确相关列和分析建议
 """
+# ruff: noqa: E501
 
 import json
 import logging
-from typing import Dict, List, Optional
+from typing import Dict, List
+
 from tenacity import (
     retry,
+    retry_if_exception_type,
     stop_after_attempt,
     wait_exponential,
-    retry_if_exception_type,
 )
 
 logger = logging.getLogger(__name__)
@@ -191,7 +193,7 @@ class QueryRewriteAgent:
                             "usage": "地域筛选或分组条件",
                         }
                     )
-                    analysis_suggestions.append(f"使用'区域'字段进行筛选或分组")
+                    analysis_suggestions.append("使用'区域'字段进行筛选或分组")
 
             # 检测指标分析
             metric_keywords = {
@@ -548,10 +550,11 @@ Now please combine the historical context and the user's current question, analy
         """
         import asyncio
         import inspect
+
         from dbgpt.core import (
-            ModelRequest,
             ModelMessage,
             ModelMessageRoleType,
+            ModelRequest,
             ModelRequestContext,
         )
 

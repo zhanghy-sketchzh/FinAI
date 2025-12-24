@@ -1,7 +1,6 @@
 """DBSummaryClient class."""
 
 import logging
-import traceback
 from typing import Tuple
 
 from dbgpt.component import SystemApp
@@ -12,7 +11,6 @@ from dbgpt.storage.vector_store.base import VectorStoreBase
 from dbgpt_ext.rag import ChunkParameters
 from dbgpt_ext.rag.summary.gdbms_db_summary import GdbmsSummary
 from dbgpt_ext.rag.summary.rdbms_db_summary import RdbmsSummary
-from dbgpt_serve.datasource.manages import ConnectorManager
 from dbgpt_serve.rag.storage_manager import StorageManager
 
 logger = logging.getLogger(__name__)

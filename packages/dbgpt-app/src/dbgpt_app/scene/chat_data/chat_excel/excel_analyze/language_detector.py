@@ -3,8 +3,8 @@
 检测用户输入是中文还是英文，用于动态选择prompt语言
 """
 
-import re
 import logging
+import re
 
 logger = logging.getLogger(__name__)
 
@@ -27,11 +27,6 @@ def detect_language(text: str) -> str:
     chinese_pattern = re.compile(r"[\u4e00-\u9fff]+")
     chinese_chars = chinese_pattern.findall(text)
     chinese_count = sum(len(match) for match in chinese_chars)
-
-    # 统计英文字符数量（字母、数字、常见标点）
-    english_pattern = re.compile(r'[a-zA-Z0-9\s\.,;:!?\'"\-_()\[\]{}]+')
-    english_chars = english_pattern.findall(text)
-    english_count = sum(len(match) for match in english_chars)
 
     # 计算总字符数（排除空格和标点）
     total_chars = len(re.sub(r'[\s\.,;:!?\'"\-_()\[\]{}]', "", text))

@@ -895,7 +895,7 @@ class RDBMSConnector(BaseConnector):
             return
         logger.info("Closing RDBMS connector resources...")
         # Close all active sessions
-        if hasattr(self, '_sessions'):
+        if hasattr(self, "_sessions"):
             for session in self._sessions:
                 try:
                     if session.is_active:
@@ -904,13 +904,13 @@ class RDBMSConnector(BaseConnector):
                     logger.error(f"Error closing session: {e}")
 
         # Remove the scoped_session registry
-        if hasattr(self, '_db_sessions'):
+        if hasattr(self, "_db_sessions"):
             try:
                 self._db_sessions.remove()
             except Exception as e:
                 logger.error(f"Error removing scoped session: {e}")
         # Release connection pool resources
-        if hasattr(self, '_engine'):
+        if hasattr(self, "_engine"):
             try:
                 self._engine.dispose()
             except Exception as e:

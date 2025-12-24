@@ -7,7 +7,6 @@ import chardet
 import duckdb
 import numpy as np
 import pandas as pd
-import sqlparse
 
 from dbgpt.util.file_client import FileClient
 from dbgpt.util.pd_utils import csv_colunm_foramt
@@ -127,7 +126,7 @@ def add_quotes_to_chinese_columns(sql, column_names=[]):
         return False
 
     # 1. 先处理 AS 别名（特殊处理，因为它们可能以数字开头）
-    as_pattern = r"\bAS\s+([a-zA-Z_\u4e00-\u9fa5][a-zA-Z0-9_\u4e00-\u9fa5]*|\d[a-zA-Z0-9_\u4e00-\u9fa5]+)"
+    as_pattern = r"\bAS\s+([a-zA-Z_\u4e00-\u9fa5][a-zA-Z0-9_\u4e00-\u9fa5]*|\d[a-zA-Z0-9_\u4e00-\u9fa5]+)"  # noqa: E501
     sql = re.sub(
         as_pattern,
         lambda m: f'AS "{m.group(1)}"' if needs_quotes(m.group(1)) else m.group(0),
@@ -136,7 +135,7 @@ def add_quotes_to_chinese_columns(sql, column_names=[]):
     )
 
     # 2. 处理点号前后的标识符（表名.列名）
-    dot_pattern = r"([a-zA-Z_\u4e00-\u9fa5][a-zA-Z0-9_\u4e00-\u9fa5]*|\d[a-zA-Z0-9_\u4e00-\u9fa5]+)\.([a-zA-Z_\u4e00-\u9fa5][a-zA-Z0-9_\u4e00-\u9fa5]*|\d[a-zA-Z0-9_\u4e00-\u9fa5]+)"
+    dot_pattern = r"([a-zA-Z_\u4e00-\u9fa5][a-zA-Z0-9_\u4e00-\u9fa5]*|\d[a-zA-Z0-9_\u4e00-\u9fa5]+)\.([a-zA-Z_\u4e00-\u9fa5][a-zA-Z0-9_\u4e00-\u9fa5]*|\d[a-zA-Z0-9_\u4e00-\u9fa5]+)"  # noqa: E501
 
     def replace_dot_notation(match):
         table_or_alias = match.group(1)
@@ -157,7 +156,7 @@ def add_quotes_to_chinese_columns(sql, column_names=[]):
     # 3. ✅ 关键修复：处理所有独立的标识符（包括函数参数内的列名）
     # 匹配标识符：字母/数字/下划线/中文组成，后面不是左括号（避免匹配函数名）
     # 同时支持以数字开头的列名（如 2022_销售额）
-    identifier_pattern = r'(?<!")(?<!\w)([a-zA-Z_\u4e00-\u9fa5][\w\u4e00-\u9fa5]*|\d[\w\u4e00-\u9fa5]+)(?!\()(?!")'
+    identifier_pattern = r'(?<!")(?<!\w)([a-zA-Z_\u4e00-\u9fa5][\w\u4e00-\u9fa5]*|\d[\w\u4e00-\u9fa5]+)(?!\()(?!")'  # noqa: E501
 
     def replace_identifier(match):
         identifier = match.group(1)
@@ -679,13 +678,22 @@ AND dc.schema_name = 'main';
                 ):
                     try:
                         # 获取唯一值数量
-                        count_query = f'SELECT COUNT(DISTINCT "{column_name}") FROM "{table_name}"'
+                        count_query = (
+                            f'SELECT COUNT(DISTINCT "{column_name}") '
+                            f'FROM "{table_name}"'
+                        )
                         unique_count = self.db.sql(count_query).fetchone()[0]
 
                         # 只有唯一值数量不超过阈值时才获取
                         if unique_count <= max_unique_values and unique_count > 0:
                             # 获取所有唯一值
-                            values_query = f'SELECT DISTINCT "{column_name}" FROM "{table_name}" WHERE "{column_name}" IS NOT NULL ORDER BY "{column_name}" LIMIT {max_unique_values}'
+                            values_query = (
+                                f'SELECT DISTINCT "{column_name}" '
+                                f'FROM "{table_name}" '
+                                f'WHERE "{column_name}" IS NOT NULL '
+                                f'ORDER BY "{column_name}" '
+                                f"LIMIT {max_unique_values}"
+                            )
                             result = self.db.sql(values_query).fetchall()
                             unique_values[column_name] = [row[0] for row in result]
                     except Exception as e:
@@ -716,7 +724,9 @@ AND dc.schema_name = 'main';
 
             # 构建描述
             description = f"表名: {table_name}\n"
-            description += f"数据规模: {table_size['row_count']} 行 × {table_size['column_count']} 列\n\n"
+            row_count = table_size["row_count"]
+            column_count = table_size["column_count"]
+            description += f"数据规模: {row_count} 行 × {column_count} 列\n\n"
             description += "列信息:\n"
 
             for column_info in columns_result:

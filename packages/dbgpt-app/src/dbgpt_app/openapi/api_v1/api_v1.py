@@ -391,51 +391,55 @@ async def file_upload(
                         CFG.SYSTEM_APP,
                         fs.download_file,
                         file_param["file_path"],  # URI
-                        cache=True
+                        cache=True,
                     )
-                    
+
                     logger.info(f"Downloaded Excel to: {local_file_path}")
-                    
+
                     # 获取原始文件名（不是UUID）
                     original_filename = file_param.get("file_name", "unknown.xlsx")
-                    
+
                     # 获取LLM客户端（用于生成Schema理解）
                     try:
                         from dbgpt.model.cluster.client import DefaultLLMClient
-                        from dbgpt.core import ModelMetadata
-                        
+
                         worker_manager = get_worker_manager()
                         llm_client = DefaultLLMClient(worker_manager)
-                        
+
                         # 获取当前配置的默认模型名称
                         default_model = model_name or CFG.LLM_MODEL
-                        
+
                         logger.info(f"✅ 成功获取LLM客户端，使用模型: {default_model}")
                     except Exception as e:
                         logger.warning(f"⚠️ 获取LLM客户端失败: {e}，将使用fallback方法")
                         llm_client = None
                         default_model = None
-                    
+
                     # 自动注册到数据源 - 传递LLM客户端、模型名称、原始文件名和会话ID
-                    excel_service = ExcelAutoRegisterService(llm_client=llm_client, model_name=default_model)
-                    
+                    excel_service = ExcelAutoRegisterService(
+                        llm_client=llm_client, model_name=default_model
+                    )
+
                     # 检测Excel文件中的sheet数量，如果有多个sheet则自动启用合并模式
                     import pandas as pd
+
                     try:
                         excel_file = pd.ExcelFile(local_file_path)
                         sheet_count = len(excel_file.sheet_names)
                         sheet_names = excel_file.sheet_names
-                        logger.info(f"Excel文件包含 {sheet_count} 个sheet: {sheet_names}")
-                        
+                        logger.info(
+                            f"Excel文件包含 {sheet_count} 个sheet: {sheet_names}"
+                        )
+
                         # 如果有多个sheet，自动启用合并模式
                         merge_sheets = sheet_count > 1
                         if merge_sheets:
-                            logger.info(f"检测到多个sheet，自动启用合并模式")
+                            logger.info("检测到多个sheet，自动启用合并模式")
                     except Exception as e:
                         logger.warning(f"无法读取Excel sheet信息: {e}，将使用默认设置")
                         merge_sheets = False
                         sheet_names = None
-                    
+
                     register_result = await blocking_func_to_async(
                         CFG.SYSTEM_APP,
                         excel_service.process_excel,
@@ -446,27 +450,35 @@ async def file_upload(
                         conv_uid,  # 传递会话ID
                         sheet_names,  # 传递sheet名称列表（None表示所有sheet）
                         merge_sheets,  # 是否合并多个sheet
-                        "数据类型"  # 来源列名
+                        "数据类型",  # 来源列名
                     )
-                    
+
                     # 将注册结果添加到 file_param 中
                     file_param["excel_registered"] = True
                     file_param["db_name"] = register_result["db_name"]
-                    file_param["db_path"] = register_result.get("db_path")  # 添加SQLite数据库路径
+                    file_param["db_path"] = register_result.get(
+                        "db_path"
+                    )  # 添加SQLite数据库路径
                     file_param["table_name"] = register_result["table_name"]
                     file_param["content_hash"] = register_result["content_hash"]
                     file_param["register_status"] = register_result["status"]
                     file_param["summary_prompt"] = register_result.get("summary_prompt")
-                    file_param["data_schema_json"] = register_result.get("data_schema_json")
+                    file_param["data_schema_json"] = register_result.get(
+                        "data_schema_json"
+                    )
                     file_param["row_count"] = register_result.get("row_count")
                     file_param["column_count"] = register_result.get("column_count")
                     file_param["top_10_rows"] = register_result.get("top_10_rows")
-                    file_param["suggested_questions"] = register_result.get("suggested_questions")
-                    
+                    file_param["suggested_questions"] = register_result.get(
+                        "suggested_questions"
+                    )
+
                     # 存储到 excel_schema 表
                     try:
-                        from dbgpt_app.scene.chat_data.chat_excel.excel_schema_db import ExcelSchemaDao
-                        
+                        from dbgpt_app.scene.chat_data.chat_excel.excel_schema_db import (  # noqa: E501
+                            ExcelSchemaDao,
+                        )
+
                         excel_schema_dao = ExcelSchemaDao()
                         excel_schema_dao.save_or_update(
                             conv_uid=conv_uid,
@@ -477,18 +489,23 @@ async def file_upload(
                             top_10_rows=register_result.get("top_10_rows", []),
                             data_description=register_result.get("summary_prompt"),
                             data_schema_json=register_result.get("data_schema_json"),
-                            suggested_questions=register_result.get("suggested_questions"),
+                            suggested_questions=register_result.get(
+                                "suggested_questions"
+                            ),
                             file_path=file_param["file_path"],
                             db_path=register_result.get("db_path"),
                             user_id=user_token.user_id,
-                            sys_code=sys_code
+                            sys_code=sys_code,
                         )
-                        logger.info(f"✅ Excel schema saved to database for conv_uid={conv_uid}")
+                        logger.info(
+                            f"✅ Excel schema saved to database for conv_uid={conv_uid}"
+                        )
                     except Exception as e:
                         logger.error(f"❌ Failed to save Excel schema to database: {e}")
                         import traceback
+
                         logger.error(traceback.format_exc())
-                    
+
                     logger.info(
                         f"✅ Excel auto-registered: {file_param['file_name']} -> "
                         f"db={register_result['db_name']}, "
@@ -499,10 +516,11 @@ async def file_upload(
                 except Exception as e:
                     logger.error(f"❌ Failed to auto-register Excel to datasource: {e}")
                     import traceback
+
                     logger.error(traceback.format_exc())
                     file_param["excel_registered"] = False
                     file_param["register_error"] = str(e)
-            
+
             # Prepare the chat
             file_param["file_learning"] = True
             dialogue = ConversationVo(
@@ -552,11 +570,11 @@ async def get_excel_info(
     user_token: UserRequest = Depends(get_user_from_headers),
 ):
     """获取Excel文件的基本信息
-    
+
     Args:
         conv_uid: 会话ID
         user_token: 用户令牌
-    
+
     Returns:
         Excel基本信息，包括：
         - 前10行数据
@@ -566,20 +584,21 @@ async def get_excel_info(
     """
     try:
         from dbgpt_app.scene.chat_data.chat_excel.excel_schema_db import ExcelSchemaDao
-        
+
         excel_schema_dao = ExcelSchemaDao()
         schema_entity = excel_schema_dao.get_by_conv_uid(conv_uid)
-        
+
         if not schema_entity:
             return Result.failed(msg=f"未找到会话 {conv_uid} 的Excel信息")
-        
+
         # 转换为字典
         excel_info = excel_schema_dao.to_dict(schema_entity)
-        
+
         return Result.succ(excel_info)
     except Exception as e:
         logger.error(f"获取Excel信息失败: {str(e)}")
         import traceback
+
         logger.error(traceback.format_exc())
         return Result.failed(msg=f"获取Excel信息失败: {str(e)}")
 

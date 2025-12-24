@@ -1,3 +1,4 @@
+# ruff: noqa: E501
 from dbgpt._private.config import Config
 from dbgpt.core import (
     ChatPromptTemplate,
@@ -22,7 +23,7 @@ _SYSTEM_PROMPT_ZH = """你是一个专业的数据分析专家。
 
 _SYSTEM_PROMPT_EN = """You are a professional data analysis expert.
 
-Your responsibility is to understand the user's data analysis requirements and generate correct DuckDB SQL queries."""
+Your responsibility is to understand the user's data analysis requirements and generate correct DuckDB SQL queries."""  # noqa: E501
 
 # ===== 可复用的 DuckDB 规则块 =====
 _DUCKDB_RULES_ZH = """

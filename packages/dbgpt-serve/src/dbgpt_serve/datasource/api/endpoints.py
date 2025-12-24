@@ -1,7 +1,7 @@
+import os
+import tempfile
 from functools import cache
 from typing import List, Optional, Union
-import tempfile
-import os
 
 from fastapi import APIRouter, Depends, File, HTTPException, Query, UploadFile
 from fastapi.security.http import HTTPAuthorizationCredentials, HTTPBearer
@@ -12,12 +12,12 @@ from dbgpt_serve.datasource.api.schemas import (
     DatasourceCreateRequest,
     DatasourceQueryResponse,
     DatasourceServeRequest,
-    ExcelUploadResponse,
     ExcelInfoResponse,
+    ExcelUploadResponse,
 )
 from dbgpt_serve.datasource.config import SERVE_SERVICE_COMPONENT_NAME, ServeConfig
-from dbgpt_serve.datasource.service.service import Service
 from dbgpt_serve.datasource.service.excel_auto_register import ExcelAutoRegisterService
+from dbgpt_serve.datasource.service.service import Service
 
 router = APIRouter()
 
@@ -307,35 +307,34 @@ async def upload_excel(
     service: Service = Depends(get_service),
 ) -> Result[ExcelUploadResponse]:
     """Upload an Excel file and auto-register to datasource
-    
+
     Args:
         file: Excel file to upload
         table_name: Target table name (optional, auto-generated if not provided)
         force_reimport: Force reimport even if cached
         service: Service instance
-        
+
     Returns:
         Result[ExcelUploadResponse]: Upload result with database info
-        
+
     Raises:
         HTTPException: When upload or processing fails
     """
     # 检查文件类型
-    if not file.filename.endswith(('.xlsx', '.xls')):
+    if not file.filename.endswith((".xlsx", ".xls")):
         raise HTTPException(
-            status_code=400,
-            detail="Only Excel files (.xlsx, .xls) are supported"
+            status_code=400, detail="Only Excel files (.xlsx, .xls) are supported"
         )
-    
+
     # 保存临时文件
     temp_file = None
     try:
         # 创建临时文件
-        with tempfile.NamedTemporaryFile(delete=False, suffix='.xlsx') as temp_file:
+        with tempfile.NamedTemporaryFile(delete=False, suffix=".xlsx") as temp_file:
             content = await file.read()
             temp_file.write(content)
             temp_file_path = temp_file.name
-        
+
         # 处理 Excel
         excel_service = ExcelAutoRegisterService()
         result = await blocking_func_to_async(
@@ -343,15 +342,14 @@ async def upload_excel(
             excel_service.process_excel,
             temp_file_path,
             table_name,
-            force_reimport
+            force_reimport,
         )
-        
+
         return Result.succ(ExcelUploadResponse(**result))
-        
+
     except Exception as e:
         raise HTTPException(
-            status_code=500,
-            detail=f"Failed to process Excel file: {str(e)}"
+            status_code=500, detail=f"Failed to process Excel file: {str(e)}"
         )
     finally:
         # 清理临时文件
@@ -372,39 +370,35 @@ async def get_excel_info(
     service: Service = Depends(get_service),
 ) -> Result[ExcelInfoResponse]:
     """Get Excel info by content hash
-    
+
     Args:
         content_hash: Content hash of the Excel file
         service: Service instance
-        
+
     Returns:
         Result[ExcelInfoResponse]: Excel information
-        
+
     Raises:
         HTTPException: When Excel info not found
     """
     try:
         excel_service = ExcelAutoRegisterService()
         info = await blocking_func_to_async(
-            global_system_app,
-            excel_service.get_excel_info,
-            content_hash
+            global_system_app, excel_service.get_excel_info, content_hash
         )
-        
+
         if info is None:
             raise HTTPException(
-                status_code=404,
-                detail=f"Excel info not found for hash: {content_hash}"
+                status_code=404, detail=f"Excel info not found for hash: {content_hash}"
             )
-        
+
         return Result.succ(ExcelInfoResponse(**info))
-        
+
     except HTTPException:
         raise
     except Exception as e:
         raise HTTPException(
-            status_code=500,
-            detail=f"Failed to get Excel info: {str(e)}"
+            status_code=500, detail=f"Failed to get Excel info: {str(e)}"
         )
 
 
@@ -419,15 +413,15 @@ async def update_excel_summary(
     service: Service = Depends(get_service),
 ) -> Result[bool]:
     """Update Excel summary prompt
-    
+
     Args:
         content_hash: Content hash of the Excel file
         summary_prompt: New summary prompt
         service: Service instance
-        
+
     Returns:
         Result[bool]: Update result
-        
+
     Raises:
         HTTPException: When update fails
     """
@@ -437,15 +431,14 @@ async def update_excel_summary(
             global_system_app,
             excel_service.update_summary_prompt,
             content_hash,
-            summary_prompt
+            summary_prompt,
         )
-        
+
         return Result.succ(True)
-        
+
     except Exception as e:
         raise HTTPException(
-            status_code=500,
-            detail=f"Failed to update summary prompt: {str(e)}"
+            status_code=500, detail=f"Failed to update summary prompt: {str(e)}"
         )
 
 

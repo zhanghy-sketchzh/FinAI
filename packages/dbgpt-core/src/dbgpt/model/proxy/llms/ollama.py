@@ -142,24 +142,28 @@ class OllamaLLMClient(ProxyLLMClient):
                             elif isinstance(item, str):
                                 text_parts.append(item)
                         content = "".join(text_parts)
-                    processed_messages.append({"content": content, "role": msg.get("role", "user")})
+                    processed_messages.append(
+                        {"content": content, "role": msg.get("role", "user")}
+                    )
                 elif "text" in msg:
-                    processed_messages.append({"content": msg["text"], "role": msg.get("role", "user")})
+                    processed_messages.append(
+                        {"content": msg["text"], "role": msg.get("role", "user")}
+                    )
                 else:
                     processed_messages.append(msg)
             else:
                 processed_messages.append(msg)
-        
+
         messages = processed_messages
 
         model = request.model or self._model
         is_reasoning_model = getattr(request.context, "is_reasoning_model", False)
         client = Client(self._api_base)
-        
+
         # 记录请求信息以便调试
         logger.info(f"Ollama API 请求 - 模型: {model}, API地址: {self._api_base}")
         logger.debug(f"Ollama 消息数量: {len(messages)}")
-        
+
         try:
             stream = client.chat(
                 model=model,
@@ -179,12 +183,13 @@ class OllamaLLMClient(ProxyLLMClient):
                 f"Ollama API 错误 - 模型: {model}, API地址: {self._api_base}, "
                 f"错误: {error_msg}"
             )
-            
+
             # 提供更详细的错误提示
             if "405" in error_msg or "Method Not Allowed" in error_msg:
                 error_detail = (
                     f"**Ollama API 错误 (405 Method Not Allowed)**\n\n"
-                    f"当前配置的 API 地址 `{self._api_base}` 不支持 Ollama 的 chat 接口。\n\n"
+                    f"当前配置的 API 地址 `{self._api_base}` "
+                    f"不支持 Ollama 的 chat 接口。\n\n"
                     f"可能的原因：\n"
                     f"1. 该地址不是标准的 Ollama 服务（标准端口是 11434）\n"
                     f"2. 该服务不支持 `/api/chat` 端点\n"
@@ -192,8 +197,10 @@ class OllamaLLMClient(ProxyLLMClient):
                     f"原始错误信息: {error_msg}"
                 )
             else:
-                error_detail = f"**Ollama Response Error, Please CheckErrorInfo.**: {error_msg}"
-            
+                error_detail = (
+                    f"**Ollama Response Error, Please CheckErrorInfo.**: {error_msg}"
+                )
+
             yield ModelOutput.build(
                 text=error_detail,
                 error_code=-1,

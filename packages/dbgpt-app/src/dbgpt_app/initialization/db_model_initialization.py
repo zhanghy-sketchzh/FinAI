@@ -6,6 +6,7 @@ from dbgpt.storage.chat_history.chat_history_db import (
     ChatHistoryMessageEntity,
 )
 from dbgpt_app.openapi.api_v1.feedback.feed_back_db import ChatFeedBackEntity
+from dbgpt_app.scene.chat_data.chat_excel.excel_schema_db import ExcelSchemaEntity
 from dbgpt_serve.agent.app.recommend_question.recommend_question import (
     RecommendQuestionEntity,
 )
@@ -20,7 +21,6 @@ from dbgpt_serve.prompt.models.models import ServeEntity as PromptManageEntity
 from dbgpt_serve.rag.models.chunk_db import DocumentChunkEntity
 from dbgpt_serve.rag.models.document_db import KnowledgeDocumentEntity
 from dbgpt_serve.rag.models.models import KnowledgeSpaceEntity
-from dbgpt_app.scene.chat_data.chat_excel.excel_schema_db import ExcelSchemaEntity
 
 _MODELS = [
     PluginHubEntity,

@@ -32,7 +32,9 @@ class ExcelLearning(BaseChat):
         """ """
         self.excel_reader: ExcelReader = excel_reader
         # 优先使用实际表名（DuckDB缓存场景），否则使用temp_table_name（传统场景）
-        self._curr_table = getattr(excel_reader, 'table_name', None) or excel_reader.temp_table_name
+        self._curr_table = (
+            getattr(excel_reader, "table_name", None) or excel_reader.temp_table_name
+        )
         super().__init__(chat_param=chat_param, system_app=system_app)
         if parent_mode:
             self.current_message.chat_mode = parent_mode.value()
