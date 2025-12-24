@@ -418,6 +418,24 @@ async def file_upload(
                     
                     # 自动注册到数据源 - 传递LLM客户端、模型名称、原始文件名和会话ID
                     excel_service = ExcelAutoRegisterService(llm_client=llm_client, model_name=default_model)
+                    
+                    # 检测Excel文件中的sheet数量，如果有多个sheet则自动启用合并模式
+                    import pandas as pd
+                    try:
+                        excel_file = pd.ExcelFile(local_file_path)
+                        sheet_count = len(excel_file.sheet_names)
+                        sheet_names = excel_file.sheet_names
+                        logger.info(f"Excel文件包含 {sheet_count} 个sheet: {sheet_names}")
+                        
+                        # 如果有多个sheet，自动启用合并模式
+                        merge_sheets = sheet_count > 1
+                        if merge_sheets:
+                            logger.info(f"检测到多个sheet，自动启用合并模式")
+                    except Exception as e:
+                        logger.warning(f"无法读取Excel sheet信息: {e}，将使用默认设置")
+                        merge_sheets = False
+                        sheet_names = None
+                    
                     register_result = await blocking_func_to_async(
                         CFG.SYSTEM_APP,
                         excel_service.process_excel,
@@ -425,7 +443,10 @@ async def file_upload(
                         None,  # 自动生成表名
                         False,  # 使用缓存
                         original_filename,  # 传递原始文件名
-                        conv_uid  # 传递会话ID
+                        conv_uid,  # 传递会话ID
+                        sheet_names,  # 传递sheet名称列表（None表示所有sheet）
+                        merge_sheets,  # 是否合并多个sheet
+                        "数据类型"  # 来源列名
                     )
                     
                     # 将注册结果添加到 file_param 中

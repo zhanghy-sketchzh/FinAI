@@ -123,8 +123,8 @@ _USER_PROMPT_TEMPLATE_ZH = """
 请按照以下要求回答用户问题：
 
 【输出要求】：
-1. 简短引导文本(1-2句话)
-2. <api-call></api-call>代码块(包含SQL)
+1. 按照<api-call><name>图表工具</name><args><sql>SQL语句</sql></args></api-call>的格式输出，不要输出其他内容。
+2. 必须输出 <api-call></api-call> 代码块，并且SQL 不能为空
 3. 优先使用图表类型(bar/line/pie/area)，避免过度使用table
 4. 禁止：冗长说明、多个api-call、提前给结论、在api-call外输出SQL
 5. 展示顺序：数据摘要 → 图表可视化 → SQL查询
@@ -152,8 +152,8 @@ _USER_PROMPT_TEMPLATE_ZH = """
 
 _USER_PROMPT_TEMPLATE_EN = """
 【Output Requirements】:
-1. Brief guide text (1-2 sentences)
-2. <api-call></api-call> block (with SQL)
+1. According to the format <api-call><name>chart tool</name><args><sql>SQL statement</sql></args></api-call>, do not output other content.
+2. Must output exactly ONE <api-call></api-call> block, SQL inside must NOT be empty
 3. Prioritize chart types (bar/line/pie/area), avoid overusing table
 4. Prohibited: lengthy explanations, multiple api-calls, premature conclusions, SQL outside api-call
 5. Display order: Data summary → Chart visualization → SQL query

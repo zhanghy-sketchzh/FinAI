@@ -306,7 +306,7 @@ def clear_chat_history(conv_uid: str = None, auto_confirm: bool = False):
 
 
 def clear_excel_dbs(auto_confirm: bool = False):
-    """清除Excel数据库文件目录
+    """清除Excel数据库文件目录（DuckDB格式）
     
     Args:
         auto_confirm: 是否自动确认（用于批量清除）
@@ -324,15 +324,18 @@ def clear_excel_dbs(auto_confirm: bool = False):
     for excel_dbs_dir in excel_dbs_dirs:
         if not excel_dbs_dir.exists():
             continue
+        # 同时支持 .duckdb（新格式）和 .db（旧格式，兼容性）
+        duckdb_files = list(excel_dbs_dir.glob("*.duckdb"))
         db_files = list(excel_dbs_dir.glob("*.db"))
+        all_db_files.extend(duckdb_files)
         all_db_files.extend(db_files)
-        total_files += len(db_files)
+        total_files += len(duckdb_files) + len(db_files)
     
     if total_files == 0:
         print(f"📭 Excel数据库目录为空")
         return
     
-    print(f"\n📊 发现 {total_files} 个Excel数据库文件")
+    print(f"\n📊 发现 {total_files} 个Excel数据库文件（.duckdb 和 .db）")
     if not auto_confirm:
         choice = input("⚠️  确认要清除所有Excel数据库文件吗？(yes/no): ")
         if choice.lower() != 'yes':
@@ -572,8 +575,8 @@ def clear_all_caches(skip_confirm: bool = False):
         skip_confirm: 是否跳过确认提示（用于API调用）
     """
     print("\n⚠️  警告: 此操作将清除以下所有缓存:")
-    print("  1. Excel缓存数据库")
-    print("  2. Excel数据库文件")
+    print("  1. Excel缓存数据库（excel_metadata.db）")
+    print("  2. Excel数据库文件（.duckdb 和 .db）")
     print("  3. 上传的Excel文件")
     print("  4. Excel聊天临时数据库")
     print("  5. 会话历史记录")

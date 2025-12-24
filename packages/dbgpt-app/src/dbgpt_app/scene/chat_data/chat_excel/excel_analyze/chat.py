@@ -61,10 +61,10 @@ class ChatExcel(BaseChat):
         self.chat_param = chat_param
         self._bucket = "dbgpt_app_file"
 
-        # 检查是否有缓存的SQLite数据库路径
+        # 检查是否有缓存的DuckDB数据库路径
         use_existing_db = False
-        sqlite_db_path = None
-        sqlite_table_name = None  # 新增：保存SQLite中的实际表名
+        duckdb_path = None
+        duckdb_table_name = None  # 保存DuckDB中的实际表名
 
         # ✅ 调试：打印select_param的类型和内容
         logger.info(f"🔍 select_param类型: {type(self.select_param)}")
@@ -86,13 +86,13 @@ class ChatExcel(BaseChat):
 
         if isinstance(select_param_dict, dict):
             # 如果有db_path，说明excel_auto_register已经处理过了
-            sqlite_db_path = select_param_dict.get("db_path")
-            sqlite_table_name = select_param_dict.get("table_name")  # 获取实际表名
+            duckdb_path = select_param_dict.get("db_path")
+            duckdb_table_name = select_param_dict.get("table_name")  # 获取实际表名
             self._content_hash = select_param_dict.get(
                 "content_hash"
             )  # 保存 content_hash 用于更新领域知识
-            logger.info(f"🔍 db_path: {sqlite_db_path}")
-            logger.info(f"🔍 table_name: {sqlite_table_name}")
+            logger.info(f"🔍 db_path: {duckdb_path}")
+            logger.info(f"🔍 table_name: {duckdb_table_name}")
             logger.info(
                 f"🔍 content_hash: {self._content_hash[:16] if self._content_hash else 'None'}..."
             )
@@ -137,13 +137,13 @@ class ChatExcel(BaseChat):
                 except Exception as e:
                     logger.warning(f"从数据库重新加载 data_schema_json 失败: {e}")
 
-            if sqlite_db_path and os.path.exists(sqlite_db_path):
+            if duckdb_path and os.path.exists(duckdb_path):
                 use_existing_db = True
-                logger.info(f"✅ 检测到已存在的SQLite数据库: {sqlite_db_path}")
-                logger.info(f"   SQLite表名: {sqlite_table_name}")
+                logger.info(f"✅ 检测到已存在的DuckDB数据库: {duckdb_path}")
+                logger.info(f"   DuckDB表名: {duckdb_table_name}")
             else:
-                if sqlite_db_path:
-                    logger.warning(f"⚠️ db_path存在但文件不存在: {sqlite_db_path}")
+                if duckdb_path:
+                    logger.warning(f"⚠️ db_path存在但文件不存在: {duckdb_path}")
                 else:
                     logger.warning(f"⚠️ select_param中没有db_path字段")
         else:
@@ -154,26 +154,23 @@ class ChatExcel(BaseChat):
             chat_param.chat_session_id,
             self.fs_client,
             self._bucket,
-            sqlite_db_path=sqlite_db_path,  # 传递SQLite路径
+            duckdb_path=duckdb_path,  # 传递DuckDB路径
         )
 
-        self._curr_table = "data_analysis_table"
-        self._file_name = file_name
-        self._database_file_path = database_file_path
-        self._database_file_id = database_file_id
-        self._query_rewrite_result = None  # 保存Query改写结果
-        self._last_sql_error = None  # 保存最后一次SQL执行错误
-
-        # 如果有SQLite数据库，使用DuckDB的SQLite扩展来查询
-        if use_existing_db and sqlite_db_path:
-            self.excel_reader = self._create_reader_from_sqlite(
+        # 如果有DuckDB数据库，直接使用DuckDB连接
+        if use_existing_db and duckdb_path:
+            # 使用DuckDB缓存时，直接使用实际表名，无需创建新表
+            self._curr_table = duckdb_table_name if duckdb_table_name else "data_analysis_table"
+            self.excel_reader = self._create_reader_from_duckdb(
                 chat_param.chat_session_id,
-                sqlite_db_path,
+                duckdb_path,
                 file_name,
-                sqlite_table_name,  # 传递SQLite中的实际表名
+                duckdb_table_name,  # 传递DuckDB中的实际表名
             )
+            logger.info(f"✅ 使用DuckDB缓存，直接使用表名: {self._curr_table}")
         else:
             # 传统方式：从Excel文件导入到DuckDB
+            self._curr_table = "data_analysis_table"
             self.excel_reader = ExcelReader(
                 chat_param.chat_session_id,
                 file_path,
@@ -185,104 +182,99 @@ class ChatExcel(BaseChat):
                 force_install=self.curr_config.force_install,
             )
 
+        self._file_name = file_name
+        self._database_file_path = database_file_path
+        self._database_file_id = database_file_id
+        self._query_rewrite_result = None  # 保存Query改写结果
+        self._last_sql_error = None  # 保存最后一次SQL执行错误
+
         self.api_call = ApiCall()
         super().__init__(chat_param=chat_param, system_app=system_app)
 
-    def _create_reader_from_sqlite(
+    def _create_reader_from_duckdb(
         self,
         conv_uid: str,
-        sqlite_path: str,
+        duckdb_path: str,
         file_name: str,
-        sqlite_table_name: str = None,
+        duckdb_table_name: str = None,
     ):
         """
-        从SQLite数据库创建ExcelReader（使用DuckDB的SQLite扩展）
+        从DuckDB数据库创建ExcelReader（直接使用DuckDB连接）
 
         Args:
             conv_uid: 会话ID
-            sqlite_path: SQLite数据库文件路径
+            duckdb_path: DuckDB数据库文件路径
             file_name: 文件名
-            sqlite_table_name: SQLite中的实际表名（如果为None，会尝试自动检测）
+            duckdb_table_name: DuckDB中的实际表名（如果为None，会尝试自动检测）
         """
         import duckdb
 
-        # 创建一个内存DuckDB连接
-        database_file_path = ":memory:"
-        db_conn = duckdb.connect(database=database_file_path, read_only=False)
+        # 直接连接DuckDB数据库文件（只读模式）
+        db_conn = duckdb.connect(database=duckdb_path, read_only=True)
 
         try:
-            # 使用DuckDB的SQLite扩展读取SQLite数据库
-            logger.info(f"正在从SQLite导入数据: {sqlite_path}")
-            db_conn.sql(f"INSTALL sqlite;")
-            db_conn.sql(f"LOAD sqlite;")
-
             # 如果没有提供表名，尝试自动检测
-            if not sqlite_table_name:
-                logger.info("未提供SQLite表名，尝试自动检测...")
-                tables_result = db_conn.sql(
-                    f"SELECT name FROM sqlite_scan('{sqlite_path}', 'sqlite_master') WHERE type='table'"
+            if not duckdb_table_name:
+                logger.info("未提供DuckDB表名，尝试自动检测...")
+                tables_result = db_conn.execute(
+                    "SELECT table_name FROM information_schema.tables WHERE table_schema = 'main'"
                 ).fetchall()
                 if tables_result:
-                    sqlite_table_name = tables_result[0][0]
-                    logger.info(f"自动检测到表名: {sqlite_table_name}")
+                    duckdb_table_name = tables_result[0][0]
+                    logger.info(f"自动检测到表名: {duckdb_table_name}")
                 else:
-                    raise ValueError(f"在SQLite数据库中未找到任何表: {sqlite_path}")
+                    raise ValueError(f"在DuckDB数据库中未找到任何表: {duckdb_path}")
 
-            # 从SQLite读取数据到DuckDB（使用实际的SQLite表名）
+            # 直接使用DuckDB中的表（无需导入）
             logger.info(
-                f"从SQLite表 '{sqlite_table_name}' 导入到DuckDB表 '{self._curr_table}'"
+                f"✅ 直接使用DuckDB表 '{duckdb_table_name}'（无需导入）"
             )
-            create_sql = f"""
-                CREATE TABLE {self._curr_table} AS 
-                SELECT * FROM sqlite_scan('{sqlite_path}', '{sqlite_table_name}')
-            """
-            db_conn.sql(create_sql)
-            logger.info(f"✅ 成功从SQLite导入数据到DuckDB表: {self._curr_table}")
 
-            # ✅ 新增：验证导入后的表结构
+            # ✅ 验证表结构
             try:
                 # 获取列名
-                columns_info = db_conn.sql(
+                columns_info = db_conn.execute(
                     f"""
                     SELECT column_name, data_type 
-                    FROM duckdb_columns() 
-                    WHERE table_name = '{self._curr_table}'
-                    ORDER BY column_index
+                    FROM information_schema.columns 
+                    WHERE table_name = '{duckdb_table_name}' AND table_schema = 'main'
+                    ORDER BY ordinal_position
                 """
                 ).fetchall()
 
                 column_names = [col[0] for col in columns_info]
-                logger.info(f"DuckDB表 '{self._curr_table}' 的列名: {column_names}")
+                logger.info(f"DuckDB表 '{duckdb_table_name}' 的列名: {column_names}")
 
                 # 获取行数
-                row_count = db_conn.sql(
-                    f"SELECT COUNT(*) FROM {self._curr_table}"
+                row_count = db_conn.execute(
+                    f"SELECT COUNT(*) FROM {duckdb_table_name}"
                 ).fetchone()[0]
-                logger.info(f"DuckDB表 '{self._curr_table}' 的行数: {row_count}")
+                logger.info(f"DuckDB表 '{duckdb_table_name}' 的行数: {row_count}")
 
                 # 获取前3行数据用于验证
-                sample_data = db_conn.sql(
-                    f"SELECT * FROM {self._curr_table} LIMIT 3"
+                sample_data = db_conn.execute(
+                    f"SELECT * FROM {duckdb_table_name} LIMIT 3"
                 ).fetchall()
                 logger.info(
-                    f"DuckDB表 '{self._curr_table}' 的前3行: {sample_data[:2]}"
+                    f"DuckDB表 '{duckdb_table_name}' 的前3行: {sample_data[:2]}"
                 )  # 只打印前2行避免日志过长
 
             except Exception as e:
-                logger.error(f"验证导入数据时出错: {e}")
+                logger.error(f"验证表结构时出错: {e}")
 
-            # 创建一个虚拟的ExcelReader对象，直接使用已创建的DuckDB连接
+            # 创建一个虚拟的ExcelReader对象，直接使用DuckDB连接
             reader = object.__new__(ExcelReader)
             reader.conv_uid = conv_uid
             reader.db = db_conn
-            reader.temp_table_name = "temp_table"
-            reader.table_name = self._curr_table
+            # 使用DuckDB缓存时，temp_table_name和table_name都设置为实际表名
+            reader.temp_table_name = duckdb_table_name  # 设置为实际表名，供ExcelLearning使用
+            reader.table_name = duckdb_table_name  # 直接使用DuckDB中的表名
             reader.excel_file_name = file_name
 
             return reader
 
         except Exception as e:
-            logger.error(f"从SQLite导入数据失败: {e}")
+            logger.error(f"从DuckDB读取数据失败: {e}")
             db_conn.close()
             raise
 
@@ -292,7 +284,7 @@ class ChatExcel(BaseChat):
         conv_uid: str,
         fs_client: FileStorageClient,
         bucket: str,
-        sqlite_db_path: str = None,
+        duckdb_path: str = None,
     ) -> Union[str, str, str]:
         if isinstance(file_param, str) and os.path.isabs(file_param):
             file_path = file_param
@@ -312,11 +304,11 @@ class ChatExcel(BaseChat):
                     raise ValueError("Not find file path!")
                 file_name = os.path.basename(file_path.replace(f"{conv_uid}_", ""))
 
-        # 如果有SQLite路径，直接使用它作为database_file_path
-        if sqlite_db_path and os.path.exists(sqlite_db_path):
-            database_file_path = sqlite_db_path
+        # 如果有DuckDB路径，直接使用它作为database_file_path
+        if duckdb_path and os.path.exists(duckdb_path):
+            database_file_path = duckdb_path
             database_file_id = None
-            logger.info(f"✅ 使用缓存的SQLite数据库: {sqlite_db_path}")
+            logger.info(f"✅ 使用缓存的DuckDB数据库: {duckdb_path}")
         else:
             # 传统方式：使用DuckDB
             database_root_path = os.path.join(DATA_DIR, "_chat_excel_tmp")
@@ -330,7 +322,7 @@ class ChatExcel(BaseChat):
             file_path, file_meta = fs_client.download_file(file_path, dest_dir=DATA_DIR)
             file_name = os.path.basename(file_path)
 
-            if not sqlite_db_path:  # 只在没有SQLite路径时才使用DuckDB
+            if not duckdb_path:  # 只在没有DuckDB路径时才创建新的DuckDB
                 database_file_path = os.path.join(
                     database_root_path, f"_chat_excel_{file_name}.duckdb"
                 )
@@ -502,7 +494,7 @@ class ChatExcel(BaseChat):
 分析逻辑：
 {rewrite_result.get('analysis_logic', '')}
 
-接下来请进行分析查询。
+接下来请按照格式要求生成sql语句进行查询。
 """
                         # 保存改写结果供后续使用
                         self._query_rewrite_result = rewrite_result
@@ -981,34 +973,40 @@ class ChatExcel(BaseChat):
 
             if summary_prompt and isinstance(summary_prompt, str):
                 logger.info(f"✅ 检测到缓存的 Data Summary，跳过 LLM 生成")
-                # 使用简化方式创建 data_analysis_table（直接复制temp_table）
-                try:
-                    await blocking_func_to_async(
-                        self._executor, self._create_simple_data_analysis_table
-                    )
-
-                    logger.info(f"✅ 使用简化方式创建了 data_analysis_table")
-
-                    # 生成并保存 Excel 基本信息（即使使用缓存）
-                    await self._generate_and_save_excel_info(None)
-
-                    # 生成包含 Excel 基本信息的展示消息
-                    excel_info_message = await self._format_excel_info_message()
-
-                    # 如果有 Excel 基本信息，返回展示消息
-                    if excel_info_message:
-                        return ModelOutput(
-                            error_code=0, text=excel_info_message, finish_reason="stop"
+                # 检查是否使用DuckDB缓存（表名不是默认的 data_analysis_table）
+                if self._curr_table != "data_analysis_table":
+                    # 使用DuckDB缓存，表已存在，无需创建
+                    logger.info(f"✅ 使用DuckDB缓存，表 {self._curr_table} 已存在，跳过创建")
+                else:
+                    # 传统方式，需要创建 data_analysis_table
+                    try:
+                        await blocking_func_to_async(
+                            self._executor, self._create_simple_data_analysis_table
                         )
+                        logger.info(f"✅ 使用简化方式创建了 data_analysis_table")
+                    except Exception as e:
+                        logger.warning(f"使用缓存创建表失败: {e}, 将重新生成")
+                        # 继续执行后续的LLM生成流程
+                        pass
 
-                    # 返回简化消息
+                # 生成并保存 Excel 基本信息（即使使用缓存）
+                await self._generate_and_save_excel_info(None)
+
+                # 生成包含 Excel 基本信息的展示消息
+                excel_info_message = await self._format_excel_info_message()
+
+                # 如果有 Excel 基本信息，返回展示消息
+                if excel_info_message:
                     return ModelOutput(
-                        error_code=0,
-                        text="数据分析结构已加载（使用缓存）",
-                        finish_reason="stop",
+                        error_code=0, text=excel_info_message, finish_reason="stop"
                     )
-                except Exception as e:
-                    logger.warning(f"使用缓存创建表失败: {e}, 将重新生成")
+
+                # 返回简化消息
+                return ModelOutput(
+                    error_code=0,
+                    text="数据分析结构已加载（使用缓存）",
+                    finish_reason="stop",
+                )
 
         # 如果没有缓存，则调用 LLM 生成
         logger.info(f"⚠️ 未检测到缓存，将调用 LLM 生成 Data Summary")
@@ -1064,7 +1062,7 @@ class ChatExcel(BaseChat):
         return result
 
     def _create_simple_data_analysis_table(self):
-        """创建简化版的 data_analysis_table（直接复制temp_table）"""
+        """创建简化版的 data_analysis_table（从现有表复制）"""
         try:
             # 检查 data_analysis_table 是否已存在
             tables = self.excel_reader.db.sql("SHOW TABLES").fetchall()
@@ -1074,15 +1072,28 @@ class ChatExcel(BaseChat):
                 logger.info(f"✅ {self._curr_table} 已存在，跳过创建")
                 return
 
-            # 检查 temp_table 是否存在
-            if "temp_table" not in table_names:
-                logger.warning(f"⚠️ temp_table 不存在，无法创建 {self._curr_table}")
-                raise ValueError(f"temp_table 不存在")
+            # 优先使用 excel_reader 的实际表名（DuckDB 缓存场景）
+            source_table = None
+            if hasattr(self.excel_reader, 'table_name') and self.excel_reader.table_name:
+                source_table = self.excel_reader.table_name
+                if source_table in table_names and source_table != self._curr_table:
+                    logger.info(f"使用实际表名 {source_table} 创建 {self._curr_table}")
+                    sql = f"CREATE TABLE {self._curr_table} AS SELECT * FROM {source_table};"
+                    self.excel_reader.db.sql(sql)
+                    logger.info(f"✅ Created {self._curr_table} from {source_table}")
+                    return
 
-            # 直接复制 temp_table 到 data_analysis_table
-            sql = f"CREATE TABLE {self._curr_table} AS SELECT * FROM temp_table;"
-            self.excel_reader.db.sql(sql)
-            logger.info(f"Created {self._curr_table} from temp_table")
+            # 如果没有实际表名，尝试使用 temp_table（传统场景）
+            if "temp_table" in table_names:
+                logger.info(f"使用 temp_table 创建 {self._curr_table}")
+                sql = f"CREATE TABLE {self._curr_table} AS SELECT * FROM temp_table;"
+                self.excel_reader.db.sql(sql)
+                logger.info(f"✅ Created {self._curr_table} from temp_table")
+                return
+
+            # 如果都没有，报错
+            logger.error(f"⚠️ 找不到源表：temp_table 不存在，且 excel_reader.table_name ({getattr(self.excel_reader, 'table_name', None)}) 也不存在")
+            raise ValueError(f"找不到可用的源表来创建 {self._curr_table}")
         except Exception as e:
             logger.error(f"Failed to create {self._curr_table}: {e}")
             raise
@@ -1301,85 +1312,8 @@ class ChatExcel(BaseChat):
                 text,
                 self.excel_reader.get_df_by_sql_ex,
             )
-            # 检查是否有SQL执行错误
-            self._last_sql_error = self._extract_sql_error_from_result(result)
             return result
 
-    def _extract_sql_error_from_result(self, result: str) -> str:
-        """从结果中提取SQL执行错误信息"""
-        try:
-            import re
-            import html
-            import json
-
-            logger.info(f"[SQL错误检测] 检查结果中的错误信息, 结果长度: {len(result)}")
-
-            # 方法1: 检查是否包含ERROR!或Error:标记
-            if (
-                '<span style="color:red">ERROR!' in result
-                or '<span style="color:red">Error:</span>' in result
-            ):
-                logger.info("[SQL错误检测] 发现ERROR或Error标记")
-                # 尝试匹配 ERROR! 或 Error:
-                error_patterns = [
-                    r"ERROR!</span>(.*?)(?:<chart-view|$)",
-                    r"Error:</span>(.*?)(?:<chart-view|\n|$)",
-                ]
-                for pattern in error_patterns:
-                    match = re.search(pattern, result, re.DOTALL)
-                    if match:
-                        error_msg = match.group(1).strip()
-                        logger.info(f"从ERROR/Error标记中提取到错误: {error_msg[:200]}")
-                        return error_msg
-
-            # 方法2: 检查chart-view中的err_msg字段
-            # 支持双引号和单引号
-            chart_pattern = r'<chart-view content=["\']([^"\']+)["\']'
-            matches = re.findall(chart_pattern, result)
-            logger.info(f"[SQL错误检测] 找到 {len(matches)} 个chart-view")
-
-            if matches:
-                for i, match_str in enumerate(matches):
-                    try:
-                        content_str = html.unescape(match_str)
-                        content_data = json.loads(content_str)
-
-                        # 检查err_msg字段
-                        err_msg = content_data.get("err_msg", "")
-                        if err_msg:
-                            logger.info(
-                                f"从chart-view {i} 的err_msg中提取到错误: {err_msg[:200]}"
-                            )
-                            return err_msg
-
-                        # 检查status字段
-                        status = content_data.get("status")
-                        if status == "failed":
-                            logger.info(f"[SQL错误检测] chart-view {i} status为failed")
-                            # 如果没有err_msg但状态是failed,也算作错误
-                            return "SQL执行失败,但未提供详细错误信息"
-
-                    except Exception as parse_err:
-                        logger.debug(f"解析chart-view {i} 失败: {parse_err}")
-                        pass
-
-            # 方法3: 检查是否有Data Query Exception文本
-            if "Data Query Exception" in result:
-                logger.info("[SQL错误检测] 发现Data Query Exception文本")
-                exception_pattern = r"Data Query Exception[!]?\\n(.*?)(?:\n|$)"
-                match = re.search(exception_pattern, result, re.DOTALL)
-                if match:
-                    error_msg = match.group(1).strip()
-                    logger.info(
-                        f"从Data Query Exception中提取到错误: {error_msg[:200]}"
-                    )
-                    return error_msg
-
-            logger.info("[SQL错误检测] 未在结果中发现错误信息")
-
-        except Exception as e:
-            logger.warning(f"提取SQL错误信息失败: {e}", exc_info=True)
-        return None
 
     async def stream_call(self, text_output: bool = True, incremental: bool = False):
         """
@@ -1739,9 +1673,13 @@ class ChatExcel(BaseChat):
 === User's Current Question ===
 {self.current_user_input.last_text}
 {sql_results_text}
-Based on the conversation history and all the SQL query results above, summarize and answer the user's current question in one sentence.
-If the current question is a follow-up or continuation of previous topics, reflect continuity and contextual relationship in your summary.
-Use the same language style as the user's question.
+**IMPORTANT - Language Requirement**:
+- The user's question is in ENGLISH
+- You MUST respond in ENGLISH
+- Your answer MUST be in ENGLISH, not Chinese
+- Based on the conversation history and all the SQL query results above, summarize and answer the user's current question in one sentence in ENGLISH.
+- If the current question is a follow-up or continuation of previous topics, reflect continuity and contextual relationship in your summary.
+- Use ENGLISH language style consistent with the user's question.
 
 Answer:"""
             else:
@@ -1749,9 +1687,12 @@ Answer:"""
 === 用户当前问题 ===
 {self.current_user_input.last_text}
 {sql_results_text}
-请根据历史对话和上述所有SQL查询结果，用一句话总结并完整回答用户的当前问题。
-如果当前问题是追问或延续之前的话题，请在总结中体现出连贯性和上下文关系。
-语言风格和用户问题一致。
+**重要 - 语言要求**：
+- 用户的问题是**中文**
+- 你必须用**中文**回答
+- 请根据历史对话和上述所有SQL查询结果，用一句话总结并完整回答用户的当前问题。
+- 如果当前问题是追问或延续之前的话题，请在总结中体现出连贯性和上下文关系。
+- 语言风格和用户问题一致，使用**中文**。
 
 回答："""
 

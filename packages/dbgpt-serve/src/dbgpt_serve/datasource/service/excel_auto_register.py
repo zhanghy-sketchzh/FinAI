@@ -96,12 +96,13 @@ class ExcelCacheManager:
         return hashlib.sha256(content.encode('utf-8')).hexdigest()
     
     @staticmethod
-    def calculate_file_hash(file_path: str) -> str:
+    def calculate_file_hash(file_path: str, sheet_names: List[str] = None) -> str:
         """
-        计算文件级别的哈希值（基于文件内容）
+        计算文件级别的哈希值（基于文件内容和sheet列表）
         
         Args:
             file_path: Excel文件路径
+            sheet_names: 要处理的sheet名称列表（如果为None则不考虑sheet信息）
         
         Returns:
             SHA256 哈希值
@@ -113,6 +114,11 @@ class ExcelCacheManager:
             # 分块读取，避免大文件占用过多内存
             for byte_block in iter(lambda: f.read(4096), b""):
                 sha256_hash.update(byte_block)
+        
+        # 如果指定了sheet_names，将其也纳入哈希计算（确保不同sheet组合产生不同哈希）
+        if sheet_names:
+            sheet_info = ",".join(sorted(sheet_names))
+            sha256_hash.update(sheet_info.encode('utf-8'))
         
         return sha256_hash.hexdigest()
     
@@ -389,10 +395,15 @@ class ExcelAutoRegisterService:
                 return f"theme_{fg_color.theme}_{tint:.2f}"
         return None
     
-    def _detect_header_rows_with_color(self, excel_file_path: str) -> Tuple[List[int], Dict]:
-        """使用颜色信息和LLM检测表头行"""
+    def _detect_header_rows_with_color(self, excel_file_path: str, sheet_name: str = None) -> Tuple[List[int], Dict]:
+        """使用颜色信息和LLM检测表头行
+        
+        Args:
+            excel_file_path: Excel文件路径
+            sheet_name: sheet名称，如果为None则使用active sheet
+        """
         wb = openpyxl.load_workbook(excel_file_path)
-        ws = wb.active
+        ws = wb[sheet_name] if sheet_name else wb.active
         
         max_check_rows = min(20, ws.max_row)
         max_cols = ws.max_column
@@ -685,11 +696,17 @@ class ExcelAutoRegisterService:
         
         return combined_headers
     
-    def _process_multi_level_header(self, df_raw: pd.DataFrame, excel_file_path: str) -> pd.DataFrame:
-        """处理多级表头"""
+    def _process_multi_level_header(self, df_raw: pd.DataFrame, excel_file_path: str, sheet_name: str = None) -> pd.DataFrame:
+        """处理多级表头
+        
+        Args:
+            df_raw: 原始DataFrame
+            excel_file_path: Excel文件路径
+            sheet_name: sheet名称
+        """
         import numpy as np
         
-        header_rows, color_info = self._detect_header_rows_with_color(excel_file_path)
+        header_rows, color_info = self._detect_header_rows_with_color(excel_file_path, sheet_name)
         
         if not header_rows:
             header_rows = [0]
@@ -1007,20 +1024,123 @@ class ExcelAutoRegisterService:
         
         return sorted(header_rows)
     
+    def _merge_multiple_sheets(
+        self, 
+        sheets_data: List[Tuple[str, pd.DataFrame]], 
+        source_column_name: str = "数据类型"
+    ) -> pd.DataFrame:
+        """
+        合并多个sheet的数据，添加来源标识列
+        
+        Args:
+            sheets_data: [(sheet_name, dataframe), ...] 列表
+            source_column_name: 来源列的列名，默认为"数据类型"
+        
+        Returns:
+            合并后的DataFrame
+        """
+        if not sheets_data:
+            raise ValueError("sheets_data不能为空")
+        
+        if len(sheets_data) == 1:
+            # 只有一个sheet，直接添加来源列
+            sheet_name, df = sheets_data[0]
+            df_copy = df.copy()
+            df_copy[source_column_name] = sheet_name
+            return df_copy
+        
+        # 多个sheet的情况
+        merged_dfs = []
+        
+        # 收集所有列名（按出现顺序）
+        all_columns = []
+        seen_columns = set()
+        for sheet_name, df in sheets_data:
+            for col in df.columns:
+                if col not in seen_columns:
+                    all_columns.append(col)
+                    seen_columns.add(col)
+        
+        logger.info(f"合并{len(sheets_data)}个sheet，共{len(all_columns)}个唯一列")
+        
+        # 对每个sheet进行列对齐
+        for sheet_name, df in sheets_data:
+            df_copy = df.copy()
+            
+            # 添加缺失的列（填充为None）
+            for col in all_columns:
+                if col not in df_copy.columns:
+                    df_copy[col] = None
+            
+            # 按统一的列顺序重新排列
+            df_copy = df_copy[all_columns]
+            
+            # 添加来源列
+            df_copy[source_column_name] = sheet_name
+            
+            merged_dfs.append(df_copy)
+            logger.debug(f"Sheet '{sheet_name}': {len(df)}行 -> 对齐后{len(df_copy)}行")
+        
+        # 合并所有DataFrame
+        merged_df = pd.concat(merged_dfs, ignore_index=True)
+        logger.info(f"合并完成：总行数 {len(merged_df)}")
+        
+        return merged_df
+    
     def process_excel(
         self,
         excel_file_path: str,
         table_name: str = None,
         force_reimport: bool = False,
         original_filename: str = None,
-        conv_uid: str = None
+        conv_uid: str = None,
+        sheet_names: List[str] = None,
+        merge_sheets: bool = False,
+        source_column_name: str = "数据类型"
     ) -> Dict:
-        """处理Excel文件，自动注册到数据源"""
+        """处理Excel文件，自动注册到数据源
+        
+        Args:
+            excel_file_path: Excel文件路径
+            table_name: 表名（可选）
+            force_reimport: 是否强制重新导入
+            original_filename: 原始文件名（可选）
+            conv_uid: 会话ID（可选）
+            sheet_names: 要处理的sheet名称列表，如果为None则处理所有sheet
+            merge_sheets: 是否合并多个sheet（如果为True，将多个sheet合并为一张表）
+            source_column_name: 合并时添加的来源列名，默认为"数据类型"
+        """
         if original_filename is None:
             original_filename = Path(excel_file_path).name
         
-        # 使用文件级别的哈希（在读取Excel前计算）
-        content_hash = self.cache_manager.calculate_file_hash(excel_file_path)
+        # 读取Excel获取sheet信息
+        excel_file = pd.ExcelFile(excel_file_path)
+        all_sheet_names = excel_file.sheet_names
+        
+        # 确定要处理的sheet
+        if sheet_names is None:
+            target_sheets = all_sheet_names
+        else:
+            # 验证指定的sheet是否存在
+            target_sheets = []
+            for name in sheet_names:
+                if name in all_sheet_names:
+                    target_sheets.append(name)
+                else:
+                    logger.warning(f"Sheet '{name}' 不存在，跳过")
+            
+            if not target_sheets:
+                raise ValueError(f"指定的sheet都不存在。可用的sheet: {all_sheet_names}")
+        
+        logger.info(f"📊 发现 {len(all_sheet_names)} 个sheet: {all_sheet_names}")
+        logger.info(f"📌 将处理 {len(target_sheets)} 个sheet: {target_sheets}")
+        logger.info(f"🔄 合并模式: {'是' if merge_sheets else '否'}")
+        
+        # 使用文件级别的哈希（包含sheet信息）
+        content_hash = self.cache_manager.calculate_file_hash(
+            excel_file_path, 
+            target_sheets if merge_sheets else None
+        )
         logger.debug(f"文件哈希: {content_hash[:16]}... (文件: {original_filename})")
         
         # 检查缓存（在读取Excel和处理表头之前）
@@ -1031,16 +1151,15 @@ class ExcelAutoRegisterService:
                 cached_schema_json = cached_info.get("data_schema_json")
                 
                 # 为了返回top_10_rows，需要从数据库读取
-                # 这比重新读取和处理Excel要快得多
                 try:
-                    conn = sqlite3.connect(cached_info["db_path"])
-                    cursor = conn.cursor()
-                    cursor.execute(f"SELECT * FROM {cached_info['table_name']} LIMIT 10")
-                    rows = cursor.fetchall()
-                    
+                    import duckdb
+                    conn = duckdb.connect(cached_info["db_path"])
                     # 获取列名
-                    cursor.execute(f"PRAGMA table_info('{cached_info['table_name']}')")
-                    columns = [col[1] for col in cursor.fetchall()]
+                    columns_result = conn.execute(f"DESCRIBE {cached_info['table_name']}").fetchall()
+                    columns = [col[0] for col in columns_result]
+                    
+                    # 获取前10行数据
+                    rows = conn.execute(f"SELECT * FROM {cached_info['table_name']} LIMIT 10").fetchall()
                     conn.close()
                     
                     # 转换为字典列表
@@ -1070,8 +1189,29 @@ class ExcelAutoRegisterService:
         
         # 没有缓存或强制重新导入，需要完整处理
         logger.info(f"📝 开始处理Excel文件（需要识别表头）: {original_filename}")
-        df_raw = pd.read_excel(excel_file_path, header=None)
-        df = self._process_multi_level_header(df_raw, excel_file_path)
+        
+        # 处理多个sheet
+        if merge_sheets and len(target_sheets) > 1:
+            # 合并多个sheet的场景
+            logger.info(f"🔄 合并 {len(target_sheets)} 个sheet...")
+            sheets_data = []
+            
+            for sheet_name in target_sheets:
+                logger.info(f"  处理 sheet: {sheet_name}")
+                df_raw = pd.read_excel(excel_file_path, sheet_name=sheet_name, header=None)
+                df_processed = self._process_multi_level_header(df_raw, excel_file_path, sheet_name)
+                sheets_data.append((sheet_name, df_processed))
+                logger.info(f"    ✅ {sheet_name}: {len(df_processed)}行 × {len(df_processed.columns)}列")
+            
+            # 合并所有sheet
+            df = self._merge_multiple_sheets(sheets_data, source_column_name)
+            logger.info(f"✅ 合并完成: {len(df)}行 × {len(df.columns)}列")
+        else:
+            # 只处理第一个sheet（原有逻辑）
+            target_sheet = target_sheets[0]
+            logger.info(f"📄 处理单个sheet: {target_sheet}")
+            df_raw = pd.read_excel(excel_file_path, sheet_name=target_sheet, header=None)
+            df = self._process_multi_level_header(df_raw, excel_file_path, target_sheet)
         
         if table_name is None:
             base_name = Path(original_filename).stem
@@ -1083,16 +1223,17 @@ class ExcelAutoRegisterService:
             table_name = base_name
         
         db_name = f"excel_{content_hash[:8]}"
-        db_filename = f"{db_name}.db"
+        db_filename = f"{db_name}.duckdb"
         db_path = str(self.db_storage_dir / db_filename)
         
         df = self._remove_empty_columns(df)
         df = self._remove_duplicate_columns(df)
         df = self._format_date_columns(df)
         df = self._convert_column_types(df)  # 智能类型转换
+        
         df.columns = [str(col).replace(' ', '').replace('\u00A0', '').replace('\n', '').replace('\r', '').replace('\t', '') for col in df.columns]
         
-        # 清理后再次去重列名,防止SQLite报duplicate column name错误
+        # 清理后再次去重列名,防止DuckDB报duplicate column name错误
         final_columns = []
         seen_columns = {}
         for col in df.columns:
@@ -1104,21 +1245,35 @@ class ExcelAutoRegisterService:
                 final_columns.append(col)
         df.columns = final_columns
         
-        conn = sqlite3.connect(db_path)
+        # 直接使用DuckDB保存数据（跳过SQLite）
+        import duckdb
+        conn = None
         try:
-            df.to_sql(table_name, conn, if_exists="replace", index=False)
-            conn.commit()
-        except Exception as e:
+            conn = duckdb.connect(db_path)
+            # 将DataFrame注册为临时视图，然后创建表
+            conn.register('temp_df', df)
+            conn.execute(f"CREATE TABLE {table_name} AS SELECT * FROM temp_df")
+            # DuckDB 会自动提交，但显式关闭连接确保数据写入磁盘
             conn.close()
-            logger.error(f"数据写入SQLite失败: {e}")
+            conn = None
+            logger.info(f"✅ 数据已保存到DuckDB: {db_path} (表: {table_name}, 行数: {len(df)})")
+        except Exception as e:
+            if conn:
+                try:
+                    conn.close()
+                except:
+                    pass
+            logger.error(f"数据写入DuckDB失败: {e}")
+            print(f"❌ DEBUG: 保存失败: {e}")
             raise Exception(f"Excel数据转换为数据库失败: {e}")
         
-        cursor = conn.cursor()
-        cursor.execute(f"PRAGMA table_info('{table_name}')")
-        columns = cursor.fetchall()
-        conn.close()
-        
-        columns_info = [{"name": col[1], "type": col[2], "dtype": str(df[col[1]].dtype)} for col in columns]
+        # 获取列信息
+        conn = duckdb.connect(db_path)
+        try:
+            columns_result = conn.execute(f"DESCRIBE {table_name}").fetchall()
+            columns_info = [{"name": col[0], "type": col[1], "dtype": str(df[col[0]].dtype)} for col in columns_result]
+        finally:
+            conn.close()
         
         schema_understanding_json = self._generate_schema_understanding_with_llm(df, table_name)
         summary_prompt = self._format_schema_as_prompt(schema_understanding_json, df, table_name)
@@ -1690,16 +1845,41 @@ def main():
     service = ExcelAutoRegisterService(llm_client=llm_client, model_name=model_name)
     excel_path = "/Users/luchun/Desktop/work/DB-GPT/示例-超市_多级表头2.xlsx"
     
-    print("\n第一次导入...")
+    # 示例1: 单sheet处理（原有功能）
+    print("\n" + "="*60)
+    print("示例1: 单sheet处理")
+    print("="*60)
     result1 = service.process_excel(excel_path)
     print(f"状态: {result1['status']}, 数据库: {result1['db_name']}, "
           f"行数: {result1['row_count']}, 列数: {result1['column_count']}")
     
+    # 示例2: 多sheet合并处理（新功能）
+    print("\n" + "="*60)
+    print("示例2: 多sheet合并处理")
+    print("="*60)
+    # 假设Excel有多个sheet: Sheet1, Sheet2, Sheet3
+    # 如果你的Excel确实有多个sheet，取消下面的注释来测试
+    """
+    result2 = service.process_excel(
+        excel_path,
+        merge_sheets=True,  # 开启合并模式
+        sheet_names=None,  # None表示处理所有sheet，也可以指定 ['Sheet1', 'Sheet2']
+        source_column_name="数据类型",  # 来源列的列名
+        force_reimport=True  # 强制重新导入（避免使用缓存）
+    )
+    print(f"状态: {result2['status']}, 数据库: {result2['db_name']}, "
+          f"行数: {result2['row_count']}, 列数: {result2['column_count']}")
+    print(f"合并后的列: {[col['name'] for col in result2['columns_info']]}")
+    """
     
-    print("\n第二次导入(缓存)...")
-    result2 = service.process_excel(excel_path)
-    print(f"状态: {result2['status']}, 访问次数: {result2.get('access_count', 0)}")
-    print("\n测试完成")
+    # 示例3: 缓存测试
+    print("\n" + "="*60)
+    print("示例3: 缓存测试")
+    print("="*60)
+    result3 = service.process_excel(excel_path)
+    print(f"状态: {result3['status']}, 访问次数: {result3.get('access_count', 0)}")
+    
+    print("\n✅ 测试完成")
 
 
 if __name__ == "__main__":

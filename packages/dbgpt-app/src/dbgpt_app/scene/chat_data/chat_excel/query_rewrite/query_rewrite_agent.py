@@ -377,6 +377,43 @@ class QueryRewriteAgent:
   }}
 }}
 
+=== 示例 ===
+**用户问题**：分析一下各部门的薪酬情况
+
+**输出示例**：
+{{
+  "rewritten_query": "分析各部门的薪酬情况，包括各部门的平均月薪、平均奖金发放金额、奖金与月薪的比例关系，以及各部门员工的职级分布和绩效表现情况。",
+  "relevant_columns": [
+    {{
+      "column_name": "基本信息(BasicInfo)-部门",
+      "usage": "分组维度，用于按部门统计薪酬情况"
+    }},
+    {{
+      "column_name": "基本信息(BasicInfo)-目前月薪",
+      "usage": "聚合指标，用于计算各部门平均月薪"
+    }},
+    {{
+      "column_name": "本次-下发(CNY)",
+      "usage": "聚合指标，用于计算各部门平均奖金发放金额"
+    }},
+    {{
+      "column_name": "基本信息(BasicInfo)-专业职级",
+      "usage": "分组维度，用于分析各部门职级分布"
+    }},
+    {{
+      "column_name": "基本信息(BasicInfo)-2024绩效H1/H2",
+      "usage": "分组维度，用于分析各部门绩效表现"
+    }}
+  ],
+  "analysis_suggestions": [
+    "建议1：以部门为维度，计算每个部门的平均月薪和平均奖金下发金额，并计算奖金与月薪的比例，从而评估各部门薪酬水平和激励力度。",
+    "建议2：进一步按职级和绩效维度细分部门数据，分析不同职级和绩效水平在各部门的分布情况，识别高绩效高薪酬的群体。",
+    "建议3：可以结合组织全称或部门下一级组织字段，进行更细粒度的组织结构薪酬分析，识别不同子组织的薪酬差异。"
+  ],
+  "analysis_logic": "1) 筛选数据：无需特殊筛选，使用全部员工数据进行分析；2) 分组维度：以'基本信息(BasicInfo)-部门'为分组维度；3) 聚合指标：计算'基本信息(BasicInfo)-目前月薪'的均值、'本次-下发(CNY)'的均值，以及两者比值；4) 排序与对比：按平均奖金发放金额或平均月薪进行排序，便于识别薪酬水平较高的部门。",
+  "domain_knowledge": null
+}}
+
 **关于 domain_knowledge 的说明**：
 - 只有当用户明确纠正、补充或说明了某个字段的使用方法时才需要填写
 - 如果用户只是普通提问，不需要填写此字段（可以省略或设为 null）
@@ -431,6 +468,43 @@ Please strictly follow the following JSON format:
     "column_name": "Field name (if the user has corrected or supplemented the usage method of a field)",
     "knowledge": "Business knowledge or data processing techniques supplemented by the user (e.g., 'This field format is H1,H2, before the comma is H1 performance, after the comma is H2 performance, need to use SPLIT_PART function to split')"
   }}
+}}
+
+=== Example (English) ===
+**User Question**: Analyze salary by department
+
+**Output Example**:
+{{
+  "rewritten_query": "Analyze the salary situation of each department, including the average monthly salary, average bonus amount, the ratio between bonus and monthly salary, as well as the job level distribution and performance of employees in each department.",
+  "relevant_columns": [
+    {{
+      "column_name": "BasicInfo-Department",
+      "usage": "Grouping dimension for statistical analysis by department"
+    }},
+    {{
+      "column_name": "BasicInfo-CurrentMonthlySalary",
+      "usage": "Aggregation indicator for calculating average monthly salary by department"
+    }},
+    {{
+      "column_name": "Current-BonusAmount(CNY)",
+      "usage": "Aggregation indicator for calculating average bonus amount by department"
+    }},
+    {{
+      "column_name": "BasicInfo-ProfessionalLevel",
+      "usage": "Grouping dimension for analyzing job level distribution by department"
+    }},
+    {{
+      "column_name": "BasicInfo-2024PerformanceH1/H2",
+      "usage": "Grouping dimension for analyzing performance by department"
+    }}
+  ],
+  "analysis_suggestions": [
+    "Suggestion 1: Group by department, calculate the average monthly salary and average bonus amount for each department, and calculate the ratio between bonus and monthly salary to evaluate the salary level and incentive intensity of each department.",
+    "Suggestion 2: Further segment department data by job level and performance dimensions to analyze the distribution of different job levels and performance levels in each department, identifying high-performance and high-salary groups.",
+    "Suggestion 3: Combine with organization full name or department sub-organization fields for more granular organizational structure salary analysis to identify salary differences between different sub-organizations."
+  ],
+  "analysis_logic": "1) Data filtering: No special filtering needed, use all employee data for analysis; 2) Grouping dimension: Group by 'BasicInfo-Department'; 3) Aggregation indicators: Calculate the mean of 'BasicInfo-CurrentMonthlySalary', the mean of 'Current-BonusAmount(CNY)', and their ratio; 4) Sorting and comparison: Sort by average bonus amount or average monthly salary to identify departments with higher salary levels.",
+  "domain_knowledge": null
 }}
 
 **About domain_knowledge**:
