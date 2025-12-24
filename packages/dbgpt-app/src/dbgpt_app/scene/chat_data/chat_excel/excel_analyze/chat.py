@@ -1175,7 +1175,13 @@ class ChatExcel(BaseChat):
                     role_display = (
                         "User"
                         if role == "human"
-                        else ("Assistant" if is_english else "用户" if role == "human" else "助手")
+                        else (
+                            "Assistant"
+                            if is_english
+                            else "用户"
+                            if role == "human"
+                            else "助手"
+                        )
                     )
                     history_context += f"{role_display}: {content}\n\n"
 
