@@ -193,3 +193,4 @@ configs/my
 test_docs
 packages/pilot
 ./configs/
+configs/dbgpt-proxy-ollama.toml

@@ -509,22 +509,37 @@ class BaseChat(ABC):
         except Exception as e:
             print(traceback.format_exc())
             logger.error("model response parse failed！" + str(e))
+            error_message = f"{str(e)}"
             if not text_output:
                 yield ModelOutput.build(
-                    f"{str(e)}",
+                    error_message,
                     "",
                     error_code=-1,
                 )
+                # 保存错误消息到对话历史
+                self.current_message.add_ai_message(error_message)
+                self.current_message.add_view_message(
+                    f'<span style="color:red">ERROR!</span>{error_message}'
+                )
             else:
                 err_view_meg = (
-                    f'<span style="color:red">ERROR!</span>{str(e)}\n{ai_response_text}'
+                    f'<span style="color:red">ERROR!</span>{error_message}\n{ai_response_text}'
                 )
                 yield err_view_meg
+                # 保存错误消息到对话历史
+                if ai_response_text:
+                    self.current_message.add_ai_message(ai_response_text)
+                self.current_message.add_view_message(err_view_meg)
             ### store current conversation
             span.end(metadata={"error": str(e)})
-        await blocking_func_to_async(
-            self._executor, self.current_message.end_current_round
-        )
+        finally:
+            # 确保无论是否发生异常，都保存对话历史
+            try:
+                await blocking_func_to_async(
+                    self._executor, self.current_message.end_current_round
+                )
+            except Exception as save_error:
+                logger.error(f"保存对话历史失败: {save_error}", exc_info=True)
 
     async def nostream_call(self):
         payload = await self._build_model_request()

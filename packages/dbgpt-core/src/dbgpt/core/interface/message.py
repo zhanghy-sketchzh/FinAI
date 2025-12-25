@@ -1262,6 +1262,10 @@ class StorageConversation(OnceConversation, StorageItem):
 
         Save the conversation to the storage after a round of conversation
         """
+        # 检查存储是否已初始化
+        if self.conv_storage is None or self.message_storage is None:
+            return
+        
         self.save_to_storage()
 
     def _get_message_items(self) -> List[MessageStorageItem]:
@@ -1272,20 +1276,28 @@ class StorageConversation(OnceConversation, StorageItem):
 
     def save_to_storage(self) -> None:
         """Save the conversation to the storage."""
-        # Save messages first
-        message_list = self._get_message_items()
-        self._message_ids = [
-            message.identifier.str_identifier for message in message_list
-        ]
-        messages_to_save = message_list[self._has_stored_message_index + 1 :]
-        self._has_stored_message_index = len(message_list) - 1
-        if self.save_message_independent:
-            # Save messages independently
-            self.message_storage.save_list(messages_to_save)
-        # Save conversation
-        if self.summary is not None and len(self.summary) > 4000:
-            self.summary = self.summary[0:4000]
-        self.conv_storage.save_or_update(self)
+        try:
+            # Save messages first
+            message_list = self._get_message_items()
+            self._message_ids = [
+                message.identifier.str_identifier for message in message_list
+            ]
+            messages_to_save = message_list[self._has_stored_message_index + 1 :]
+            self._has_stored_message_index = len(message_list) - 1
+            
+            if self.save_message_independent and messages_to_save:
+                # Save messages independently
+                self.message_storage.save_list(messages_to_save)
+            
+            # Save conversation
+            if self.summary is not None and len(self.summary) > 4000:
+                self.summary = self.summary[0:4000]
+            
+            self.conv_storage.save_or_update(self)
+        except Exception as e:
+            import logging
+            logger = logging.getLogger(__name__)
+            logger.error(f"保存对话历史失败: conv_uid={self.conv_uid}, 错误={str(e)}", exc_info=True)
 
     def load_from_storage(
         self, conv_storage: StorageInterface, message_storage: StorageInterface

@@ -969,6 +969,9 @@ class ChatExcel(BaseChat):
         self._last_sql_error = None
         full_output = await self.call_llm_operator(payload)
 
+        ai_response_text = ""
+        view_message = ""
+        
         if full_output:
             try:
                 ai_response_text, view_message = await self._handle_final_output(
@@ -1006,6 +1009,8 @@ class ChatExcel(BaseChat):
             except Exception as e:
                 logger.error(f"处理输出时出错: {e}")
                 error_msg = f"数据查询失败：{str(e)}"
+                ai_response_text = error_msg
+                view_message = error_msg
                 if text_output:
                     yield error_msg
                 else:
@@ -1014,12 +1019,26 @@ class ChatExcel(BaseChat):
                     )
         else:
             error_msg = "生成SQL失败，请重试"
+            ai_response_text = error_msg
+            view_message = error_msg
             if text_output:
                 yield error_msg
             else:
                 yield ModelOutput.build(
                     error_msg, "", error_code=1, finish_reason="error"
                 )
+        
+        # 保存对话历史
+        try:
+            if ai_response_text:
+                self.current_message.add_ai_message(ai_response_text)
+            if view_message:
+                self.current_message.add_view_message(view_message)
+            await blocking_func_to_async(
+                self._executor, self.current_message.end_current_round
+            )
+        except Exception as save_error:
+            logger.error(f"保存对话历史失败: {save_error}", exc_info=True)
 
     async def _handle_final_output(
         self,
