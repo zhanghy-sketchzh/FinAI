@@ -1,8 +1,7 @@
 import { ChatContext } from '@/app/chat-context';
-import { apiInterceptors, getAppInfo, getChatHistory, getDialogueList } from '@/client/api';
+import { apiInterceptors, getAppInfo, getChatHistory, getDialogueList, newDialogue } from '@/client/api';
 import useChat from '@/hooks/use-chat';
 import ChatContentContainer from '@/new-components/chat/ChatContentContainer';
-import ChatDefault from '@/new-components/chat/content/ChatDefault';
 import ChatInputPanel from '@/new-components/chat/input/ChatInputPanel';
 import ChatSider from '@/new-components/chat/sider/ChatSider';
 import { IApp } from '@/types/app';
@@ -11,6 +10,7 @@ import { getInitMessage, transformFileUrl } from '@/utils';
 import { useAsyncEffect, useRequest } from 'ahooks';
 import { Flex, Layout, Spin } from 'antd';
 import dynamic from 'next/dynamic';
+import { useRouter } from 'next/router';
 import { useSearchParams } from 'next/navigation';
 import React, { createContext, useCallback, useContext, useEffect, useMemo, useRef, useState } from 'react';
 
@@ -77,7 +77,8 @@ export const ChatContentContext = createContext<ChatContentProps>({
 });
 
 const Chat: React.FC = () => {
-  const { model, currentDialogInfo } = useContext(ChatContext);
+  const router = useRouter();
+  const { model, currentDialogInfo, setCurrentDialogInfo } = useContext(ChatContext);
   const { isContract, setIsContract, setIsMenuExpand } = useContext(ChatContext);
   const { chat, ctrl } = useChat({
     app_code: currentDialogInfo.app_code || '',
@@ -98,6 +99,9 @@ const Chat: React.FC = () => {
   // Use ref to store the selected prompt_code
   const selectedPromptCodeRef = useRef<string | undefined>(undefined);
 
+  // 用于防止重复创建会话
+  const isCreatingRef = useRef<boolean>(false);
+
   const [history, setHistory] = useState<ChatHistoryResponse>([]);
   const [chartsData] = useState<Array<ChartData>>();
   const [replyLoading, setReplyLoading] = useState<boolean>(false);
@@ -109,6 +113,32 @@ const Chat: React.FC = () => {
   const [resourceValue, setResourceValue] = useState<any>();
   const [modelValue, setModelValue] = useState<string>('');
 
+  // 自动创建 Chat Excel 会话
+  useEffect(() => {
+    const createChatExcel = async () => {
+      if (!chatId && !scene && !isCreatingRef.current) {
+        isCreatingRef.current = true;
+        const [, res] = await apiInterceptors(newDialogue({ chat_mode: 'chat_excel', model }));
+        if (res) {
+          setCurrentDialogInfo?.({
+            chat_scene: 'chat_excel',
+            app_code: '',
+          });
+          localStorage.setItem(
+            'cur_dialog_info',
+            JSON.stringify({
+              chat_scene: 'chat_excel',
+              app_code: '',
+            }),
+          );
+          router.replace(`/chat?scene=chat_excel&id=${res.conv_uid}${model ? `&model=${model}` : ''}`);
+        }
+        isCreatingRef.current = false;
+      }
+    };
+    createChatExcel();
+  }, [chatId, scene, model, router, setCurrentDialogInfo]);
+
   useEffect(() => {
     setTemperatureValue(appInfo?.param_need?.filter(item => item.type === 'temperature')[0]?.value || 0.6);
     setMaxNewTokensValue(appInfo?.param_need?.filter(item => item.type === 'max_new_tokens')[0]?.value || 4000);
@@ -117,6 +147,14 @@ const Chat: React.FC = () => {
       knowledgeId || dbName || appInfo?.param_need?.filter(item => item.type === 'resource')[0]?.bind_value,
     );
   }, [appInfo, dbName, knowledgeId, model]);
+
+  // 当 chatId 变化时，重置 resourceValue（新会话没有上传文件）
+  useEffect(() => {
+    if (chatId) {
+      // 重置 resourceValue，让新会话可以重新上传文件
+      setResourceValue(null);
+    }
+  }, [chatId]);
 
   useEffect(() => {
     // 仅初始化执行，防止dashboard页面无法切换状态
@@ -348,8 +386,8 @@ const Chat: React.FC = () => {
       return isContract ? <DbEditor /> : <ChatContainer />;
     } else {
       return isChatDefault ? (
-        <Content>
-          <ChatDefault />
+        <Content className='flex items-center justify-center h-full'>
+          <Spin size='large' />
         </Content>
       ) : (
         <Spin spinning={historyLoading} className='w-full h-full m-auto'>

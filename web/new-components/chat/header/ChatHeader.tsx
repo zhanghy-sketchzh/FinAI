@@ -1,9 +1,10 @@
-import { apiInterceptors, collectApp, unCollectApp } from '@/client/api';
+import { ChatContext } from '@/app/chat-context';
+import { apiInterceptors, collectApp, newDialogue, unCollectApp } from '@/client/api';
 import { ChatContentContext } from '@/pages/chat';
-import { ExportOutlined, LoadingOutlined, StarFilled, StarOutlined } from '@ant-design/icons';
-import { Spin, Tag, Typography, message } from 'antd';
-import copy from 'copy-to-clipboard';
-import React, { useContext, useMemo } from 'react';
+import { LoadingOutlined, PlusOutlined, StarFilled, StarOutlined } from '@ant-design/icons';
+import { Spin, Tag, Typography } from 'antd';
+import { useRouter } from 'next/router';
+import React, { useCallback, useContext, useMemo } from 'react';
 import { useTranslation } from 'react-i18next';
 
 import { useRequest } from 'ahooks';
@@ -12,10 +13,32 @@ import AppDefaultIcon from '../../common/AppDefaultIcon';
 const tagColors = ['magenta', 'orange', 'geekblue', 'purple', 'cyan', 'green'];
 
 const ChatHeader: React.FC<{ isScrollToTop: boolean }> = ({ isScrollToTop }) => {
-  const { appInfo, refreshAppInfo, handleChat, scrollRef, temperatureValue, resourceValue, currentDialogue } =
+  const { appInfo, refreshAppInfo, handleChat, scrollRef, temperatureValue, resourceValue, currentDialogue, refreshDialogList } =
     useContext(ChatContentContext);
+  const { model, setCurrentDialogInfo } = useContext(ChatContext);
+  const router = useRouter();
 
   const { t } = useTranslation();
+
+  // 新建会话
+  const handleNewChat = useCallback(async () => {
+    const [, res] = await apiInterceptors(newDialogue({ chat_mode: 'chat_excel', model }));
+    if (res) {
+      setCurrentDialogInfo?.({
+        chat_scene: 'chat_excel',
+        app_code: '',
+      });
+      localStorage.setItem(
+        'cur_dialog_info',
+        JSON.stringify({
+          chat_scene: 'chat_excel',
+          app_code: '',
+        }),
+      );
+      router.push(`/chat?scene=chat_excel&id=${res.conv_uid}${model ? `&model=${model}` : ''}`);
+      refreshDialogList?.();
+    }
+  }, [model, router, setCurrentDialogInfo, refreshDialogList]);
 
   const appScene = useMemo(() => {
     return appInfo?.team_context?.chat_scene || 'chat_agent';
@@ -49,11 +72,6 @@ const ChatHeader: React.FC<{ isScrollToTop: boolean }> = ({ isScrollToTop }) => 
     return null;
   }
 
-  const shareApp = async () => {
-    const success = copy(location.href);
-    message[success ? 'success' : 'error'](success ? t('copy_success') : t('copy_failed'));
-  };
-
   // 正常header
   const headerContent = () => {
     return (
@@ -80,7 +98,16 @@ const ChatHeader: React.FC<{ isScrollToTop: boolean }> = ({ isScrollToTop }) => 
             </Typography.Text>
           </div>
         </div>
-        <div className='flex items-center gap-4'>
+        <div className='flex items-center gap-3'>
+          {/* 新建会话 */}
+          <div
+            onClick={handleNewChat}
+            className='flex items-center gap-2 px-4 h-10 bg-[#ffffff99] dark:bg-[rgba(255,255,255,0.2)] border border-white dark:border-[rgba(255,255,255,0.2)] rounded-full cursor-pointer hover:bg-[#f0f0f0] dark:hover:bg-[rgba(255,255,255,0.3)]'
+          >
+            <PlusOutlined style={{ fontSize: 16 }} />
+            <span className='text-sm font-medium'>{t('new_chat')}</span>
+          </div>
+          {/* 收藏 */}
           <div
             onClick={async () => {
               await operate();
@@ -140,7 +167,7 @@ const ChatHeader: React.FC<{ isScrollToTop: boolean }> = ({ isScrollToTop }) => 
   // 吸顶header
   const topHeaderContent = () => {
     return (
-      <header className='flex items-center justify-between w-full h-14 bg-[#ffffffb7] dark:bg-[rgba(41,63,89,0.4)]  px-8 transition-all duration-500 ease-in-out'>
+      <header className='flex items-center justify-between w-full h-14 bg-[#f0f7ff] dark:bg-[#1a2332] px-8 transition-all duration-500 ease-in-out'>
         <div className='flex items-center'>
           <div className='flex items-center justify-center w-8 h-8 rounded-lg mr-2 bg-white'>
             <AppDefaultIcon scene={appScene} />
@@ -153,30 +180,34 @@ const ChatHeader: React.FC<{ isScrollToTop: boolean }> = ({ isScrollToTop }) => 
             </div>
           </div>
         </div>
-        <div
-          className='flex gap-8'
-          onClick={async () => {
-            await operate();
-          }}
-        >
-          {loading ? (
-            <Spin spinning={loading} indicator={<LoadingOutlined style={{ fontSize: 24 }} spin />} />
-          ) : (
-            <>
-              {isCollected ? (
-                <StarFilled style={{ fontSize: 18 }} className='text-yellow-400 cursor-pointer' />
-              ) : (
-                <StarOutlined style={{ fontSize: 18, cursor: 'pointer' }} />
-              )}
-            </>
-          )}
-          <ExportOutlined
-            className='text-lg'
-            onClick={e => {
-              e.stopPropagation();
-              shareApp();
+        <div className='flex items-center gap-4'>
+          {/* 新建会话 */}
+          <div
+            onClick={handleNewChat}
+            className='flex items-center gap-1.5 px-3 h-8 rounded-full cursor-pointer hover:bg-[#f0f0f0] dark:hover:bg-[rgba(255,255,255,0.2)]'
+          >
+            <PlusOutlined style={{ fontSize: 14 }} />
+            <span className='text-sm font-medium'>{t('new_chat')}</span>
+          </div>
+          {/* 收藏 */}
+          <div
+            onClick={async () => {
+              await operate();
             }}
-          />
+            className='cursor-pointer'
+          >
+            {loading ? (
+              <Spin spinning={loading} indicator={<LoadingOutlined style={{ fontSize: 24 }} spin />} />
+            ) : (
+              <>
+                {isCollected ? (
+                  <StarFilled style={{ fontSize: 18 }} className='text-yellow-400 cursor-pointer' />
+                ) : (
+                  <StarOutlined style={{ fontSize: 18, cursor: 'pointer' }} />
+                )}
+              </>
+            )}
+          </div>
         </div>
       </header>
     );
