@@ -10,8 +10,8 @@ import { getInitMessage, transformFileUrl } from '@/utils';
 import { useAsyncEffect, useRequest } from 'ahooks';
 import { Flex, Layout, Spin } from 'antd';
 import dynamic from 'next/dynamic';
-import { useRouter } from 'next/router';
 import { useSearchParams } from 'next/navigation';
+import { useRouter } from 'next/router';
 import React, { createContext, useCallback, useContext, useEffect, useMemo, useRef, useState } from 'react';
 
 const DbEditor = dynamic(() => import('@/components/chat/db-editor'), {
