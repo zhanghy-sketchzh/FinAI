@@ -1,13 +1,24 @@
 import { ChatContext } from '@/app/chat-context';
-import { apiInterceptors, delDialogue } from '@/client/api';
+import { apiInterceptors, delDialogue, newDialogue } from '@/client/api';
+import { DarkSvg, SunnySvg } from '@/components/icons';
+import UserBar from '@/new-components/layout/UserBar';
 import { IChatDialogueSchema } from '@/types/chat';
-import { CaretLeftOutlined, CaretRightOutlined, DeleteOutlined, ShareAltOutlined } from '@ant-design/icons';
+import { STORAGE_LANG_KEY, STORAGE_THEME_KEY } from '@/utils/constants/index';
+import Icon, {
+  CaretLeftOutlined,
+  CaretRightOutlined,
+  DeleteOutlined,
+  GlobalOutlined,
+  PlusOutlined,
+} from '@ant-design/icons';
 import type { MenuProps } from 'antd';
-import { Flex, Layout, Modal, Spin, Tooltip, Typography, message } from 'antd';
-import copy from 'copy-to-clipboard';
+import { Flex, Layout, Modal, Popover, Spin, Tooltip, Typography } from 'antd';
+import moment from 'moment';
+import 'moment/locale/zh-cn';
 import Image from 'next/image';
+import Link from 'next/link';
 import { useRouter, useSearchParams } from 'next/navigation';
-import React, { useContext, useMemo, useState } from 'react';
+import React, { useCallback, useContext, useMemo, useState } from 'react';
 import { useTranslation } from 'react-i18next';
 import AppDefaultIcon from '../../common/AppDefaultIcon';
 
@@ -115,20 +126,6 @@ const MenuItem: React.FC<{
             className='group-hover/item:opacity-100 cursor-pointer opacity-0'
             onClick={e => {
               e.stopPropagation();
-            }}
-          >
-            <ShareAltOutlined
-              style={{ fontSize: 16 }}
-              onClick={() => {
-                const success = copy(`${location.origin}/chat?scene=${item.chat_mode}&id=${item.conv_uid}`);
-                message[success ? 'success' : 'error'](success ? t('copy_success') : t('copy_failed'));
-              }}
-            />
-          </div>
-          <div
-            className='group-hover/item:opacity-100 cursor-pointer opacity-0'
-            onClick={e => {
-              e.stopPropagation();
               handleDelChat();
             }}
           >
@@ -152,11 +149,48 @@ const ChatSider: React.FC<{
   listLoading: boolean;
   order: React.MutableRefObject<number>;
 }> = ({ dialogueList = [], refresh, historyLoading, listLoading, order }) => {
+  const router = useRouter();
   const searchParams = useSearchParams();
   const scene = searchParams?.get('scene') ?? '';
-  const { t } = useTranslation();
-  const { mode } = useContext(ChatContext);
+  const { t, i18n } = useTranslation();
+  const { mode, setMode, model, setCurrentDialogInfo } = useContext(ChatContext);
   const [collapsed, setCollapsed] = useState<boolean>(scene === 'chat_dashboard');
+
+  // 新建会话
+  const handleNewChat = useCallback(async () => {
+    const [, res] = await apiInterceptors(newDialogue({ chat_mode: 'chat_excel', model }));
+    if (res) {
+      setCurrentDialogInfo?.({
+        chat_scene: 'chat_excel',
+        app_code: '',
+      });
+      localStorage.setItem(
+        'cur_dialog_info',
+        JSON.stringify({
+          chat_scene: 'chat_excel',
+          app_code: '',
+        }),
+      );
+      router.push(`/chat?scene=chat_excel&id=${res.conv_uid}${model ? `&model=${model}` : ''}`);
+      refresh?.();
+    }
+  }, [model, router, setCurrentDialogInfo, refresh]);
+
+  // 切换主题
+  const handleToggleTheme = useCallback(() => {
+    const theme = mode === 'light' ? 'dark' : 'light';
+    setMode(theme);
+    localStorage.setItem(STORAGE_THEME_KEY, theme);
+  }, [mode, setMode]);
+
+  // 切换语言
+  const handleChangeLang = useCallback(() => {
+    const language = i18n.language === 'en' ? 'zh' : 'en';
+    i18n.changeLanguage(language);
+    if (language === 'zh') moment.locale('zh-cn');
+    if (language === 'en') moment.locale('en');
+    localStorage.setItem(STORAGE_LANG_KEY, language);
+  }, [i18n]);
 
   // 展开或收起列表按钮样式
   const triggerStyle: React.CSSProperties = useMemo(() => {
@@ -191,7 +225,7 @@ const ChatSider: React.FC<{
 
   return (
     <Sider
-      className='bg-[#ffffff80]  border-r  border-[#d5e5f6] dark:bg-[#ffffff29] dark:border-[#ffffff66]'
+      className='bg-[#ffffff80] border-r border-[#d5e5f6] dark:bg-[#ffffff29] dark:border-[#ffffff66]'
       theme={mode}
       width={280}
       collapsible={true}
@@ -201,20 +235,33 @@ const ChatSider: React.FC<{
       zeroWidthTriggerStyle={triggerStyle}
       onCollapse={collapsed => setCollapsed(collapsed)}
     >
-      <div className='flex flex-col h-full w-full bg-transparent px-4 pt-6  '>
-        <div className='w-full text-base font-semibold text-[#1c2533] dark:text-[rgba(255,255,255,0.85)] mb-4 line-clamp-1'>
-          {t('dialog_list')}
+      <div className='flex flex-col h-full w-full bg-transparent'>
+        {/* Logo */}
+        <div className='px-4 pt-4 pb-4'>
+          <Link href='/' className='flex items-center justify-center'>
+            <Image src='/finai_logo.png' alt='FinAI' width={180} height={45} />
+          </Link>
         </div>
-        <Flex flex={1} vertical={true} className='overflow-y-auto'>
-          <MenuItem
-            item={{
-              label: t('assistant'),
-              key: 'default',
-              icon: <Image src='/LOGO_SMALL.png' alt='default' width={24} height={24} className='flex-1' />,
-              default: true,
-            }}
-            order={order}
-          />
+
+        {/* 对话列表标题 */}
+        <div className='px-4 pt-2'>
+          <div className='flex items-center justify-between mb-4'>
+            <div className='text-base font-semibold text-[#1c2533] dark:text-[rgba(255,255,255,0.85)] line-clamp-1'>
+              {t('dialog_list')}
+            </div>
+            <Tooltip title={t('new_chat')}>
+              <div
+                onClick={handleNewChat}
+                className='flex items-center justify-center w-7 h-7 rounded-md bg-[#0c75fc] hover:bg-[#0a5fd4] text-white cursor-pointer'
+              >
+                <PlusOutlined style={{ fontSize: 14 }} />
+              </div>
+            </Tooltip>
+          </div>
+        </div>
+
+        {/* 对话列表 */}
+        <Flex flex={1} vertical={true} className='overflow-y-auto px-4'>
           <Spin spinning={listLoading} className='mt-2'>
             {!!items?.length &&
               items.map(item => (
@@ -222,6 +269,35 @@ const ChatSider: React.FC<{
               ))}
           </Spin>
         </Flex>
+
+        {/* 底部设置区域 */}
+        <div className='px-4 py-3 border-t border-dashed border-gray-200 dark:border-gray-700'>
+          <div className='flex items-center justify-between'>
+            {/* 用户头像 */}
+            <UserBar onlyAvatar align='left' />
+            {/* 右侧操作按钮 */}
+            <div className='flex items-center gap-1'>
+              {/* 主题切换 */}
+              <Popover content={t('Theme')}>
+                <div
+                  className='flex items-center justify-center w-8 h-8 rounded-md hover:bg-[#F1F5F9] dark:hover:bg-theme-dark cursor-pointer text-lg'
+                  onClick={handleToggleTheme}
+                >
+                  {mode === 'dark' ? <Icon component={DarkSvg} /> : <Icon component={SunnySvg} />}
+                </div>
+              </Popover>
+              {/* 语言切换 */}
+              <Popover content={t('language')}>
+                <div
+                  className='flex items-center justify-center w-8 h-8 rounded-md hover:bg-[#F1F5F9] dark:hover:bg-theme-dark cursor-pointer text-lg'
+                  onClick={handleChangeLang}
+                >
+                  <GlobalOutlined />
+                </div>
+              </Popover>
+            </div>
+          </div>
+        </div>
       </div>
     </Sider>
   );

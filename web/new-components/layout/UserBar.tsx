@@ -4,7 +4,7 @@ import { Avatar } from 'antd';
 import cls from 'classnames';
 import { useEffect, useState } from 'react';
 
-function UserBar({ onlyAvatar = false }) {
+function UserBar({ onlyAvatar = false, align = 'center' }: { onlyAvatar?: boolean; align?: 'left' | 'center' }) {
   const [userInfo, setUserInfo] = useState<UserInfoResponse>();
   useEffect(() => {
     try {
@@ -22,10 +22,10 @@ function UserBar({ onlyAvatar = false }) {
   // };
 
   return (
-    <div className='flex flex-1 items-center justify-center'>
+    <div className={cls('flex items-center', { 'flex-1 justify-center': align === 'center' })}>
       <div
         className={cls('flex items-center group w-full', {
-          'justify-center': onlyAvatar,
+          'justify-center': onlyAvatar && align === 'center',
           'justify-between': !onlyAvatar,
         })}
       >

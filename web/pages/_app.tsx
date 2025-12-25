@@ -97,7 +97,7 @@ function LayoutWrapper({ children }: { children: React.ReactNode }) {
         <Head>
           <meta name='viewport' content='initial-scale=1.0, width=device-width, maximum-scale=1' />
         </Head>
-        {router.pathname !== '/construct/app/extra' && (
+        {router.pathname !== '/construct/app/extra' && !router.pathname.startsWith('/chat') && (
           <div className={classNames('transition-[width]', isMenuExpand ? 'w-60' : 'w-20', 'hidden', 'md:block')}>
             <SideBar />
           </div>
