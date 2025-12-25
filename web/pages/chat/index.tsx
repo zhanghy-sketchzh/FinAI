@@ -402,9 +402,7 @@ const Chat: React.FC = () => {
             historyLoading={historyLoading}
             order={order}
           />
-          <Layout className='bg-transparent'>
-            {contentRender()}
-          </Layout>
+          <Layout className='bg-transparent'>{contentRender()}</Layout>
         </Layout>
       </Flex>
     </ChatContentContext.Provider>

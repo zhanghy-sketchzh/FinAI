@@ -12,7 +12,7 @@ const TabContent: React.FC<{ apps: IApp[]; loading: boolean; refresh: () => void
   apps,
   refresh,
   loading,
-  type,
+  type: _type,
 }) => {
   const collect = async (data: Record<string, any>) => {
     const [error] = await apiInterceptors(

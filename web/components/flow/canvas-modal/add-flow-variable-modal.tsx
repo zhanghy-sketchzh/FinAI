@@ -260,7 +260,12 @@ export const AddFlowVariableModal: React.FC<Props> = ({ flowInfo, setFlowInfo })
                       {renderVariableValue(controlTypes[index], index)}
                     </Form.Item>
 
-                    <Form.Item {...restField} name={[name, 'description']} label={t('param_description')} style={{ width: 170 }}>
+                    <Form.Item
+                      {...restField}
+                      name={[name, 'description']}
+                      label={t('param_description')}
+                      style={{ width: 170 }}
+                    >
                       <Input placeholder='Parameter Description' />
                     </Form.Item>
 

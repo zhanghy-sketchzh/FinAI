@@ -1,6 +1,6 @@
-import { apiInterceptors, clearChatHistory, clearAllCaches } from '@/client/api';
+import { apiInterceptors, clearAllCaches, clearChatHistory } from '@/client/api';
 import { ChatContentContext } from '@/pages/chat';
-import { ClearOutlined, DeleteOutlined, LoadingOutlined, PauseCircleOutlined, RedoOutlined } from '@ant-design/icons';
+import { ClearOutlined, DeleteOutlined, LoadingOutlined, PauseCircleOutlined } from '@ant-design/icons';
 import type { UploadFile } from 'antd';
 import { Modal, Spin, Tooltip, message } from 'antd';
 import classNames from 'classnames';
@@ -35,10 +35,10 @@ const ToolsBar: React.FC<{
     currentDialogue,
     appInfo,
     temperatureValue,
-    maxNewTokensValue,
+    maxNewTokensValue: _maxNewTokensValue,
     resourceValue,
-    setTemperatureValue,
-    setMaxNewTokensValue,
+    setTemperatureValue: _setTemperatureValue,
+    setMaxNewTokensValue: _setMaxNewTokensValue,
     refreshHistory,
     setCanAbort,
     setReplyLoading,
@@ -91,7 +91,7 @@ const ToolsBar: React.FC<{
           if (clearAllLoading) {
             return;
           }
-          
+
           Modal.confirm({
             title: t('confirm_clear_all_caches'),
             content: (
@@ -117,7 +117,7 @@ const ToolsBar: React.FC<{
               try {
                 await apiInterceptors(clearAllCaches());
                 message.success(t('clear_cache_success'));
-                
+
                 // 3秒后刷新页面
                 setTimeout(() => {
                   window.location.reload();

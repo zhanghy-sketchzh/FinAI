@@ -47,7 +47,10 @@ const formatModelName = (modelName: string): string => {
   if (sizeMatch) {
     const size = sizeMatch[1].toUpperCase();
     // 移除所有大小标记，只保留最后一个
-    name = name.replace(/[-_]?\d+[BbMm][-_]?/g, '-').replace(/-+/g, '-').replace(/-$/, '');
+    name = name
+      .replace(/[-_]?\d+[BbMm][-_]?/g, '-')
+      .replace(/-+/g, '-')
+      .replace(/-$/, '');
     // 移除 A3B 这类中间标记
     name = name.replace(/-A\d+B/i, '');
     name = `${name}-${size}`;

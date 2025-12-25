@@ -102,7 +102,9 @@ const ChatHeader: React.FC<{ isScrollToTop: boolean }> = ({ isScrollToTop }) => 
         </div>
         {!!appInfo?.recommend_questions?.length && (
           <div className='absolute  bottom-[-40px] left-0'>
-            <span className='text-sm text-[#525964] dark:text-[rgba(255,255,255,0.65)] leading-6'>{t('maybe_you_want_to_ask')}</span>
+            <span className='text-sm text-[#525964] dark:text-[rgba(255,255,255,0.65)] leading-6'>
+              {t('maybe_you_want_to_ask')}
+            </span>
             {appInfo.recommend_questions.map((item, index) => (
               <Tag
                 key={item.id}
