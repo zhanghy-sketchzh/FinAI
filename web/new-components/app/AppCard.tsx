@@ -5,15 +5,18 @@ import { Card, Tag, Tooltip, Typography } from 'antd';
 import Image from 'next/image';
 import { useRouter } from 'next/router';
 import React, { useContext } from 'react';
-
-const languageMap = {
-  en: '英文',
-  zh: '中文',
-};
+import { useTranslation } from 'react-i18next';
 
 const AppCard: React.FC<{ data: IApp }> = ({ data }) => {
   const { setAgent: setAgentToChat, model } = useContext(ChatContext);
   const router = useRouter();
+  const { t } = useTranslation();
+
+  const languageMap: Record<string, string> = {
+    en: t('English'),
+    zh: t('Chinese'),
+  };
+
   return (
     <Card
       className='flex h-full flex-col bg-white rounded-lg dark:bg-[#232734] dark:text-white'
@@ -22,7 +25,6 @@ const AppCard: React.FC<{ data: IApp }> = ({ data }) => {
       onClick={async () => {
         const [, res] = await apiInterceptors(newDialogue({ chat_mode: 'chat_agent' }));
         if (res) {
-          // 原生应用跳转
           if (data.team_mode === 'native_app') {
             const { chat_scene = '' } = data.team_context;
             router.push(`/chat?scene=${chat_scene}&id=${res.conv_uid}${model ? `&model=${model}` : ''}`);
