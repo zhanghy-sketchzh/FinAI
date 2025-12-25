@@ -10,10 +10,8 @@ import { useTranslation } from 'react-i18next';
 
 import { parseResourceValue, transformFileUrl } from '@/utils';
 
-import MaxNewTokens from './MaxNewTokens';
 import ModelSwitcher from './ModelSwitcher';
 import Resource from './Resource';
-import Temperature from './Temperature';
 
 interface ToolsConfig {
   icon: React.ReactNode;
@@ -95,37 +93,37 @@ const ToolsBar: React.FC<{
           }
           
           Modal.confirm({
-            title: '确认清除所有缓存？',
+            title: t('confirm_clear_all_caches'),
             content: (
               <div>
-                <p>此操作将清除以下所有数据：</p>
+                <p>{t('clear_all_caches_content')}</p>
                 <ul style={{ paddingLeft: '20px', margin: '10px 0' }}>
-                  <li>Excel缓存数据库</li>
-                  <li>Excel数据库文件</li>
-                  <li>上传的Excel文件</li>
-                  <li>Excel聊天临时数据库</li>
-                  <li>所有会话历史记录</li>
-                  <li>文件服务器存储</li>
-                  <li>模型缓存</li>
+                  <li>{t('clear_cache_excel_db')}</li>
+                  <li>{t('clear_cache_excel_files')}</li>
+                  <li>{t('clear_cache_uploaded_excel')}</li>
+                  <li>{t('clear_cache_excel_temp_db')}</li>
+                  <li>{t('clear_cache_chat_history')}</li>
+                  <li>{t('clear_cache_file_server')}</li>
+                  <li>{t('clear_cache_model')}</li>
                 </ul>
-                <p style={{ color: 'red', fontWeight: 'bold' }}>此操作不可撤销！</p>
+                <p style={{ color: 'red', fontWeight: 'bold' }}>{t('clear_cache_warning')}</p>
               </div>
             ),
-            okText: '确认清除',
-            cancelText: '取消',
+            okText: t('confirm_clear'),
+            cancelText: t('cancel'),
             okType: 'danger',
             onOk: async () => {
               setClearAllLoading(true);
               try {
                 await apiInterceptors(clearAllCaches());
-                message.success('所有缓存已清除成功！页面将在3秒后刷新...');
+                message.success(t('clear_cache_success'));
                 
                 // 3秒后刷新页面
                 setTimeout(() => {
                   window.location.reload();
                 }, 3000);
               } catch (error: any) {
-                message.error(`清除缓存失败: ${error?.message || '未知错误'}`);
+                message.error(`${t('clear_cache_failed')}: ${error?.message || t('unknown_error')}`);
               } finally {
                 setClearAllLoading(false);
               }
@@ -268,8 +266,7 @@ const ToolsBar: React.FC<{
         <div className='flex gap-3 text-lg'>
           <ModelSwitcher />
           <Resource fileList={fileList} setFileList={setFileList} setLoading={setLoading} fileName={fileName} />
-          <Temperature temperatureValue={temperatureValue} setTemperatureValue={setTemperatureValue} />
-          <MaxNewTokens maxNewTokensValue={maxNewTokensValue} setMaxNewTokensValue={setMaxNewTokensValue} />
+          {/* Temperature and MaxNewTokens icons hidden */}
         </div>
         <div className='flex gap-1'>{returnTools(rightToolsConfig)}</div>
       </div>

@@ -99,16 +99,10 @@ const ChatHeader: React.FC<{ isScrollToTop: boolean }> = ({ isScrollToTop }) => 
               </>
             )}
           </div>
-          <div
-            onClick={shareApp}
-            className='flex items-center justify-center w-10 h-10 bg-[#ffffff99] dark:bg-[rgba(255,255,255,0.2)] border border-white dark:border-[rgba(255,255,255,0.2)] rounded-[50%] cursor-pointer'
-          >
-            <ExportOutlined className='text-lg' />
-          </div>
         </div>
         {!!appInfo?.recommend_questions?.length && (
           <div className='absolute  bottom-[-40px] left-0'>
-            <span className='text-sm text-[#525964] dark:text-[rgba(255,255,255,0.65)] leading-6'>或许你想问：</span>
+            <span className='text-sm text-[#525964] dark:text-[rgba(255,255,255,0.65)] leading-6'>{t('maybe_you_want_to_ask')}</span>
             {appInfo.recommend_questions.map((item, index) => (
               <Tag
                 key={item.id}

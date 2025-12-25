@@ -4,6 +4,7 @@ import { IChatDialogueMessageSchema } from '@/types/chat';
 import { Divider } from 'antd';
 import cls from 'classnames';
 import React, { memo, useContext, useMemo, useRef } from 'react';
+import { useTranslation } from 'react-i18next';
 import { MobileChatContext } from '../';
 import Feedback from './Feedback';
 
@@ -14,14 +15,15 @@ type DBGPTView = {
   err_msg?: string;
 };
 
-// 对话气泡
+// Chat bubble
 const ChatDialog: React.FC<{
   message: IChatDialogueMessageSchema;
   index: number;
 }> = ({ message, index }) => {
   const { scene } = useContext(MobileChatContext);
   const { context, model_name, role, thinking } = message;
-  // GPT回复
+  const { t } = useTranslation();
+  // GPT reply
   const isRobot = useMemo(() => role === 'view', [role]);
 
   const chatDialogRef = useRef<HTMLDivElement>(null);
@@ -93,10 +95,10 @@ const ChatDialog: React.FC<{
           {typeof context === 'string' && scene !== 'chat_agent' && (
             <MarkdownContext>{formatMarkdownVal(value)}</MarkdownContext>
           )}
-          {/* 正在思考 */}
+          {/* Thinking */}
           {thinking && !context && (
             <div className='flex items-center gap-2'>
-              <span className='flex text-sm text-[#1c2533] dark:text-white'>思考中</span>
+              <span className='flex text-sm text-[#1c2533] dark:text-white'>{t('thinking')}</span>
               <div className='flex'>
                 <div className='w-1 h-1 rounded-full mx-1 animate-pulse1'></div>
                 <div className='w-1 h-1 rounded-full mx-1 animate-pulse2'></div>
