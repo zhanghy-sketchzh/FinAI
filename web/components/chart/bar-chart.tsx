@@ -1,4 +1,5 @@
 import { ChatContext } from '@/app/chat-context';
+import i18n from '@/app/i18n';
 import { ChartData } from '@/types/chat';
 import { Chart } from '@berryv/g2-react';
 import { useContext, useMemo } from 'react';
@@ -55,11 +56,11 @@ export default function BarChart({ chart }: { key: string; chart: ChartData }) {
                 items: [
                   {
                     field: 'name',
-                    name: '名称',
+                    name: i18n.t('chart_name'),
                   },
                   {
                     field: 'value',
-                    name: '数值',
+                    name: i18n.t('chart_value'),
                     valueFormatter: formatNumber,
                   },
                 ],

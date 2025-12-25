@@ -1,10 +1,10 @@
 /** @type {import('next').NextConfig} */
-const CopyPlugin = require("copy-webpack-plugin");
-const MonacoWebpackPlugin = require("monaco-editor-webpack-plugin");
-const path = require("path");
+const CopyPlugin = require('copy-webpack-plugin');
+const MonacoWebpackPlugin = require('monaco-editor-webpack-plugin');
+const path = require('path');
 const nextConfig = {
   experimental: {
-    esmExternals: "loose",
+    esmExternals: 'loose',
   },
   typescript: {
     ignoreBuildErrors: true,
@@ -27,35 +27,49 @@ const nextConfig = {
         new CopyPlugin({
           patterns: [
             {
-              from: path.join(
-                __dirname,
-                "node_modules/@oceanbase-odc/monaco-plugin-ob/worker-dist/"
-              ),
-              to: "static/ob-workers",
+              from: path.join(__dirname, 'node_modules/@oceanbase-odc/monaco-plugin-ob/worker-dist/'),
+              to: 'static/ob-workers',
             },
           ],
-        })
+        }),
       );
       // 添加 monaco-editor-webpack-plugin 插件
       config.plugins.push(
         new MonacoWebpackPlugin({
           // 你可以在这里配置插件的选项，例如：
-          languages: ["sql"],
-          filename: "static/[name].worker.js",
-        })
+          languages: ['sql'],
+          filename: 'static/[name].worker.js',
+        }),
       );
     }
     return config;
   },
+
+  async rewrites() {
+    // rewrites 在 output: 'export' 模式下不生效
+    if (process.env.STATIC_EXPORT === 'true') {
+      return [];
+    }
+    return [
+      {
+        source: '/api/:path*',
+        destination: 'http://localhost:5670/api/:path*',
+      },
+      {
+        source: '/images/:path*',
+        destination: 'http://localhost:5670/images/:path*',
+      },
+    ];
+  },
 };
 
-const withTM = require("next-transpile-modules")([
-  "@berryv/g2-react",
-  "@antv/g2",
-  "react-syntax-highlighter",
-  "@antv/g6",
-  "@antv/graphin",
-  "@antv/gpt-vis",
+const withTM = require('next-transpile-modules')([
+  '@berryv/g2-react',
+  '@antv/g2',
+  'react-syntax-highlighter',
+  '@antv/g6',
+  '@antv/graphin',
+  '@antv/gpt-vis',
 ]);
 
 module.exports = withTM({

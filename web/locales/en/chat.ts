@@ -15,7 +15,7 @@ export const ChatEn = {
   copy_failed: 'Copy failed',
   file_tip: 'File cannot be changed after upload',
   file_upload_tip: 'Upload file to chat(Your model must support multimodal input)',
-  assistant: 'Platform Assistant', // DataFun Assistant
+  assistant: 'Platform Assistant',
   model_tip: 'Model selection is not supported for the current application',
   temperature_tip: 'The current application does not support temperature configuration',
   max_new_tokens_tip: 'The current application does not support max_new_tokens configuration',
@@ -31,4 +31,26 @@ export const ChatEn = {
   code_preview_run: 'Run',
   code_preview_close: 'Close',
   parsing_data: 'Parsing and understanding data...',
+  // Header
+  help_center: 'Help Center',
+  // ChatHeader
+  maybe_you_want_to_ask: 'Maybe you want to ask:',
+  // ToolsBar - Clear all caches dialog
+  confirm_clear_all_caches: 'Confirm to clear all caches?',
+  clear_all_caches_content: 'This operation will clear all the following data:',
+  clear_cache_excel_db: 'Excel cache database',
+  clear_cache_excel_files: 'Excel database files',
+  clear_cache_uploaded_excel: 'Uploaded Excel files',
+  clear_cache_excel_temp_db: 'Excel chat temporary database',
+  clear_cache_chat_history: 'All chat history',
+  clear_cache_file_server: 'File server storage',
+  clear_cache_model: 'Model cache',
+  clear_cache_warning: 'This operation cannot be undone!',
+  confirm_clear: 'Confirm Clear',
+  clear_cache_success: 'All caches have been cleared! The page will refresh in 3 seconds...',
+  clear_cache_failed: 'Failed to clear cache',
+  unknown_error: 'Unknown error',
+  // Feedback
+  feedback_success: 'Feedback submitted successfully',
+  operation_success: 'Operation successful',
 };

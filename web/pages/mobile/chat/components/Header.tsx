@@ -3,10 +3,12 @@ import { ExportOutlined } from '@ant-design/icons';
 import { App, Typography } from 'antd';
 import copy from 'copy-to-clipboard';
 import React, { memo, useContext, useState } from 'react';
+import { useTranslation } from 'react-i18next';
 import { MobileChatContext } from '../';
 
 const Header: React.FC = () => {
   const { appInfo } = useContext(MobileChatContext);
+  const { t } = useTranslation();
 
   const { message } = App.useApp();
   const [count, setCount] = useState(0);
@@ -17,7 +19,7 @@ const Header: React.FC = () => {
 
   const shareApp = async () => {
     const success = copy(`dingtalk://dingtalkclient/page/link?url=${encodeURIComponent(location.href)}&pc_slide=true`);
-    message[success ? 'success' : 'error'](success ? '复制成功' : '复制失败');
+    message[success ? 'success' : 'error'](success ? t('copy_success') : t('copy_failed'));
   };
 
   if (count > 6) {
