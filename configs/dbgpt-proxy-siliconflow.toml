@@ -14,6 +14,7 @@ type = "sqlite"
 path = "pilot/meta_data/dbgpt.db"
 [service.model.worker]
 host = "127.0.0.1"
+worker_register_host = "127.0.0.1"
 
 [rag.storage]
 [rag.storage.vector]
@@ -23,17 +24,29 @@ persist_path = "pilot/data"
 # Model Configurations
 [models]
 [[models.llms]]
-name = "Qwen/Qwen2.5-Coder-32B-Instruct"
+name = "Qwen/Qwen3-Coder-30B-A3B-Instruct"
 provider = "proxy/siliconflow"
-api_key = "${env:SILICONFLOW_API_KEY}"
+api_key = "sk-knrjwaimdemmawhqyjntgztumpusjmkotbsczdxllgmroltg"
+
+
+[[models.llms]]
+name = "deepseek-r1:70b"
+provider = "proxy/custom_ollama"
+api_base = "http://tafapi.woa.com:80/api/generate"
+auth_token = "token-user1"
+
+[[models.llms]]
+name = "deepseek-ai/DeepSeek-R1-Distill-Qwen-32B"
+provider = "proxy/siliconflow"
+api_key = "sk-knrjwaimdemmawhqyjntgztumpusjmkotbsczdxllgmroltg"
 
 [[models.embeddings]]
 name = "BAAI/bge-large-zh-v1.5"
 provider = "proxy/openai"
 api_url = "https://api.siliconflow.cn/v1/embeddings"
-api_key = "${env:SILICONFLOW_API_KEY}"
+api_key = "sk-knrjwaimdemmawhqyjntgztumpusjmkotbsczdxllgmroltg"
 
 [[models.rerankers]]
 name = "BAAI/bge-reranker-v2-m3"
 provider = "proxy/siliconflow"
-api_key = "${env:SILICONFLOW_API_KEY}"
+api_key = "sk-knrjwaimdemmawhqyjntgztumpusjmkotbsczdxllgmroltg"

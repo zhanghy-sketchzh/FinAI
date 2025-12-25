@@ -194,3 +194,4 @@ test_docs
 packages/pilot
 ./configs/
 configs/dbgpt-proxy-ollama.toml
+configs/dbgpt-proxy-siliconflow.toml
