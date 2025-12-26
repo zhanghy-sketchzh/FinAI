@@ -384,12 +384,42 @@ const extraComponents: MarkdownComponent = {
       };
     }
 
+    // Helper function to check if a value is numeric
+    const isNumeric = (value: any): boolean => {
+      if (value === null || value === undefined || value === '') return false;
+      // Check if it's already a number
+      if (typeof value === 'number') return true;
+      // Check if it's a string that can be converted to a number
+      if (typeof value === 'string') {
+        // Remove common formatting characters
+        const cleaned = value.replace(/[,\s￥$€]/g, '');
+        return !isNaN(Number(cleaned)) && cleaned !== '';
+      }
+      return false;
+    };
+
+    // Helper function to determine if a column contains mostly numeric values
+    const isNumericColumn = (columnKey: string): boolean => {
+      if (!data?.data || data.data.length === 0) return false;
+      const sampleSize = Math.min(10, data.data.length); // Check first 10 rows
+      let numericCount = 0;
+      for (let i = 0; i < sampleSize; i++) {
+        if (isNumeric(data.data[i]?.[columnKey])) {
+          numericCount++;
+        }
+      }
+      // If more than 50% of sample values are numeric, consider it a numeric column
+      return numericCount > sampleSize * 0.5;
+    };
+
     const columns = data?.data?.[0]
       ? Object.keys(data?.data?.[0])?.map(item => {
+          const columnIsNumeric = isNumericColumn(item);
           return {
             title: item,
             dataIndex: item,
             key: item,
+            align: columnIsNumeric ? 'right' : 'left',
           };
         })
       : [];
@@ -410,11 +440,11 @@ const extraComponents: MarkdownComponent = {
       children: <Table dataSource={data?.data} columns={columns} scroll={{ x: true }} virtual={true} />,
     };
     const TabItems: TabsProps['items'] =
-      data?.type === 'response_table' ? [DataItem, SqlItem] : [ChartItem, SqlItem, DataItem];
+      data?.type === 'response_table' ? [DataItem, SqlItem] : [DataItem, SqlItem, ChartItem];
 
     return (
       <div>
-        <Tabs defaultActiveKey={data?.type === 'response_table' ? 'data' : 'chart'} items={TabItems} size='small' />
+        <Tabs defaultActiveKey={data?.type === 'response_table' ? 'data' : 'data'} items={TabItems} size='small' />
         {children}
       </div>
     );

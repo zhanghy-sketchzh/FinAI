@@ -115,7 +115,7 @@ export const AutoChart = (props: AutoChartProps) => {
               ...spec,
               autoFit: true,
               theme: mode,
-              height: 300,
+              height: 450,
             }}
             ref={chartRef}
           />
@@ -161,7 +161,7 @@ export const AutoChart = (props: AutoChartProps) => {
             </Tooltip>
           </Col>
         </Row>
-        <div className='flex'>{visComponent}</div>
+        <div className='flex pb-4'>{visComponent}</div>
       </div>
     );
   }

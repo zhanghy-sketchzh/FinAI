@@ -25,6 +25,8 @@ const ChatContentContainer = ({ className }: { className?: string }, ref: React.
   const { history } = useContext(ChatContentContext);
   const allowAutoScroll = useRef<boolean>(true);
   const animationFrameRef = useRef<number | null>(null);
+  const scrollTimeoutRef = useRef<NodeJS.Timeout | null>(null);
+  const lastScrollHeightRef = useRef<number>(0);
 
   useImperativeHandle(ref, () => {
     return scrollRef.current;
@@ -43,8 +45,11 @@ const ChatContentContainer = ({ className }: { className?: string }, ref: React.
     const lastScrollTop = Number(container?.dataset?.lastScrollTop) || 0;
     const direction = scrollTop > lastScrollTop ? 'down' : 'up';
     container.dataset.lastScrollTop = String(scrollTop);
-    // only allow auto scroll when user is near bottom
-    allowAutoScroll.current = direction === 'down';
+    
+    // Only disable auto scroll if user manually scrolls up significantly
+    // If user is near bottom or scrolling down, allow auto scroll
+    const isNearBottom = scrollTop + clientHeight >= scrollHeight - buffer * 2;
+    allowAutoScroll.current = direction === 'down' || isNearBottom;
 
     // Check if we're at the top
     setIsAtTop(scrollTop <= buffer);
@@ -97,19 +102,49 @@ const ChatContentContainer = ({ className }: { className?: string }, ref: React.
       return;
     }
 
-    // Clear previous animation frame to prevent memory leaks
+    // Clear previous timeouts and animation frames
+    if (scrollTimeoutRef.current) {
+      clearTimeout(scrollTimeoutRef.current);
+      scrollTimeoutRef.current = null;
+    }
     if (animationFrameRef.current) {
       cancelAnimationFrame(animationFrameRef.current);
     }
 
-    // Use requestAnimationFrame but with instant scroll to avoid animation conflicts
-    animationFrameRef.current = requestAnimationFrame(() => {
+    // Use a combination of requestAnimationFrame and setTimeout to ensure DOM is updated
+    const performScroll = () => {
       if (scrollRef.current) {
+        const targetScrollHeight = scrollRef.current.scrollHeight;
         scrollRef.current.scrollTo({
-          top: scrollRef.current.scrollHeight,
-          behavior: forceScroll ? 'smooth' : 'auto', // Smooth only for new messages, instant for streaming
+          top: targetScrollHeight,
+          behavior: forceScroll ? 'smooth' : 'auto',
         });
+        // Also try direct assignment as fallback
+        if (scrollRef.current.scrollTop < targetScrollHeight - 10) {
+          scrollRef.current.scrollTop = targetScrollHeight;
+        }
+        // Update last scroll height
+        lastScrollHeightRef.current = targetScrollHeight;
       }
+    };
+
+    // Use requestAnimationFrame for immediate scroll
+    animationFrameRef.current = requestAnimationFrame(() => {
+      performScroll();
+      // Also set multiple timeouts to ensure scroll happens after DOM updates
+      scrollTimeoutRef.current = setTimeout(() => {
+        performScroll();
+        // One more attempt after a longer delay
+        setTimeout(() => {
+          if (scrollRef.current) {
+            const currentScrollHeight = scrollRef.current.scrollHeight;
+            if (currentScrollHeight !== lastScrollHeightRef.current) {
+              performScroll();
+            }
+          }
+        }, 100);
+        scrollTimeoutRef.current = null;
+      }, 50);
       animationFrameRef.current = null;
     });
   }, []);
@@ -117,37 +152,129 @@ const ChatContentContainer = ({ className }: { className?: string }, ref: React.
   // Optimize last message tracking to reduce unnecessary re-renders
   const lastMessage = useMemo(() => {
     const last = history[history.length - 1];
-    return last ? { context: last.context, thinking: last.thinking } : null;
-  }, [history]); // Track previous history length to detect new messages
+    return last ? { context: last.context, thinking: last.thinking, role: last.role } : null;
+  }, [history]);
   const prevHistoryLengthRef = useRef(history.length);
+  const prevLastMessageRef = useRef<string>('');
 
   useEffect(() => {
     const currentHistoryLength = history.length;
     const isNewMessage = currentHistoryLength > prevHistoryLengthRef.current;
+    const lastMessageKey = lastMessage ? `${lastMessage.role}-${lastMessage.context}-${lastMessage.thinking}` : '';
+    const isMessageChanged = lastMessageKey !== prevLastMessageRef.current;
 
     if (isNewMessage) {
       // Force scroll to bottom when new message is added
-      scrollToBottomSmooth(true);
+      // Reset allowAutoScroll to true for new messages
+      allowAutoScroll.current = true;
       prevHistoryLengthRef.current = currentHistoryLength;
-    } else {
-      // For streaming content updates, only scroll if user is near bottom
-      scrollToBottomSmooth(false);
+      prevLastMessageRef.current = lastMessageKey;
+      
+      // Use multiple scroll attempts to ensure it works
+      setTimeout(() => {
+        scrollToBottomSmooth(true);
+      }, 0);
+      setTimeout(() => {
+        scrollToBottomSmooth(true);
+      }, 100);
+      setTimeout(() => {
+        scrollToBottomSmooth(true);
+      }, 300);
+    } else if (isMessageChanged) {
+      // Message content changed (streaming update)
+      prevLastMessageRef.current = lastMessageKey;
+      
+      // Scroll during streaming updates
+      setTimeout(() => {
+        scrollToBottomSmooth(false);
+      }, 0);
+      setTimeout(() => {
+        scrollToBottomSmooth(false);
+      }, 100);
     }
-  }, [history.length, scrollToBottomSmooth]);
+  }, [history.length, lastMessage?.context, lastMessage?.thinking, lastMessage?.role, scrollToBottomSmooth]);
 
-  // Handle streaming content updates separately to avoid multiple scroll calls
+  // Use ResizeObserver and MutationObserver to detect when content changes
   useEffect(() => {
-    // Only trigger scroll for content changes, not for new messages
-    if (history.length === prevHistoryLengthRef.current) {
-      scrollToBottomSmooth(false);
-    }
-  }, [lastMessage?.context, lastMessage?.thinking, history.length, scrollToBottomSmooth]);
+    if (!scrollRef.current) return;
 
-  // Cleanup animation frame on unmount
+    const container = scrollRef.current;
+    let scrollTimer: NodeJS.Timeout | null = null;
+
+    const checkAndScroll = () => {
+      if (!container) return;
+      
+      const currentScrollHeight = container.scrollHeight;
+      const hasNewContent = currentScrollHeight !== lastScrollHeightRef.current;
+      
+      if (hasNewContent) {
+        lastScrollHeightRef.current = currentScrollHeight;
+        
+        // Always scroll if auto-scroll is enabled or if user is near bottom
+        if (allowAutoScroll.current) {
+          // Use multiple attempts to ensure scroll happens after DOM updates
+          scrollTimer = setTimeout(() => {
+            if (container) {
+              container.scrollTo({
+                top: container.scrollHeight,
+                behavior: 'smooth',
+              });
+            }
+          }, 50);
+          
+          // Also try immediate scroll
+          requestAnimationFrame(() => {
+            if (container) {
+              container.scrollTo({
+                top: container.scrollHeight,
+                behavior: 'auto',
+              });
+            }
+          });
+        }
+      }
+    };
+
+    // ResizeObserver for size changes
+    const resizeObserver = new ResizeObserver(() => {
+      checkAndScroll();
+    });
+
+    // MutationObserver for DOM changes (new messages added)
+    const mutationObserver = new MutationObserver(() => {
+      checkAndScroll();
+    });
+
+    resizeObserver.observe(container);
+    mutationObserver.observe(container, {
+      childList: true,
+      subtree: true,
+      characterData: true,
+    });
+
+    // Also check periodically during streaming
+    const intervalId = setInterval(() => {
+      checkAndScroll();
+    }, 200);
+
+    return () => {
+      resizeObserver.disconnect();
+      mutationObserver.disconnect();
+      clearInterval(intervalId);
+      if (scrollTimer) {
+        clearTimeout(scrollTimer);
+      }
+    };
+  }, []);
+
+  // Cleanup animation frame and timeout on unmount
   useEffect(() => {
     return () => {
       if (animationFrameRef.current) {
         cancelAnimationFrame(animationFrameRef.current);
+      }
+      if (scrollTimeoutRef.current) {
+        clearTimeout(scrollTimeoutRef.current);
       }
     };
   }, []);

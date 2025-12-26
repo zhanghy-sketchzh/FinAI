@@ -1109,6 +1109,43 @@ class ExcelAutoRegisterService:
 
         return df_converted
 
+    def _format_numeric_columns(self, df: pd.DataFrame) -> pd.DataFrame:
+        """
+        格式化数值列为两位小数
+
+        Args:
+            df: 原始DataFrame
+
+        Returns:
+            格式化后的DataFrame（数值列保留两位小数）
+        """
+        df_formatted = df.copy()
+
+        for col in df_formatted.columns:
+            # 只处理数值类型的列
+            if df_formatted[col].dtype in [
+                "int64",
+                "float64",
+                "int32",
+                "float32",
+                "Int64",
+            ]:
+                try:
+                    # 将数值列转换为浮点数，并保留两位小数
+                    # 使用 apply 确保所有值都格式化为两位小数（包括整数）
+                    df_formatted[col] = pd.to_numeric(
+                        df_formatted[col], errors="coerce"
+                    ).apply(lambda x: round(float(x), 2) if pd.notna(x) else x)
+                    # 确保数据类型为 float64，这样 DuckDB 会正确存储为浮点数
+                    df_formatted[col] = df_formatted[col].astype("float64")
+                    logger.debug(f"列 '{col}' 格式化为两位小数 (float64)")
+                except Exception as e:
+                    logger.warning(f"格式化列 '{col}' 失败: {e}")
+                    # 如果格式化失败，保持原样
+                    pass
+
+        return df_formatted
+
     def _detect_header_rows_rule_based(self, df_raw: pd.DataFrame) -> List[int]:
         """基于规则的表头行检测"""
 
@@ -1404,6 +1441,7 @@ class ExcelAutoRegisterService:
         df = self._remove_duplicate_columns(df)
         df = self._format_date_columns(df)
         df = self._convert_column_types(df)  # 智能类型转换
+        df = self._format_numeric_columns(df)  # 格式化数值列为两位小数
 
         df.columns = [
             str(col)
@@ -1433,9 +1471,34 @@ class ExcelAutoRegisterService:
         conn = None
         try:
             conn = duckdb.connect(db_path)
-            # 将DataFrame注册为临时视图，然后创建表
+            # 将DataFrame注册为临时视图
             conn.register("temp_df", df)
-            conn.execute(f"CREATE TABLE {table_name} AS SELECT * FROM temp_df")
+            
+            # 识别数值列，并在创建表时使用 ROUND 函数确保保留两位小数
+            numeric_columns = []
+            for col in df.columns:
+                if df[col].dtype in ["int64", "float64", "int32", "float32", "Int64"]:
+                    numeric_columns.append(col)
+            
+            # 构建 SELECT 语句，对数值列应用 ROUND 函数
+            if numeric_columns:
+                select_parts = []
+                for col in df.columns:
+                    # 使用双引号转义列名，防止特殊字符问题
+                    col_quoted = f'"{col}"'
+                    if col in numeric_columns:
+                        # 对数值列使用 ROUND 函数保留两位小数
+                        select_parts.append(f"ROUND(CAST({col_quoted} AS DOUBLE), 2) AS {col_quoted}")
+                    else:
+                        select_parts.append(col_quoted)
+                select_sql = ", ".join(select_parts)
+                table_name_quoted = f'"{table_name}"'
+                conn.execute(f"CREATE TABLE {table_name_quoted} AS SELECT {select_sql} FROM temp_df")
+            else:
+                # 如果没有数值列，直接创建表
+                table_name_quoted = f'"{table_name}"'
+                conn.execute(f"CREATE TABLE {table_name_quoted} AS SELECT * FROM temp_df")
+            
             # DuckDB 会自动提交，但显式关闭连接确保数据写入磁盘
             conn.close()
             conn = None

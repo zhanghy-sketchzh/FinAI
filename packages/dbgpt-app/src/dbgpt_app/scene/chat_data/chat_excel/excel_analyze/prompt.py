@@ -46,10 +46,23 @@ _DUCKDB_RULES_ZH = """
 3. 多层 CTE 中各层之间的列引用必须一致，特别是排序和连接的列
 **DuckDB的WHERE子句必须在SELECT列定义之前处理,不能引用SELECT中定义的别名**
 
+### 【子查询使用规则】：
+- **禁止在 SELECT 列表中使用返回多行的子查询**（会导致"More than one row returned"错误）
+- **正确做法**：使用 JOIN 或窗口函数替代，如需子查询必须与主查询关联（WHERE 条件关联）
+- **示例**：计算比例应使用 `ROUND(SUM(CASE WHEN condition THEN 1 ELSE 0 END) * 100.0 / COUNT(*), 2)` 而非子查询
+
 ### 【时间序列分析】：
 - **同比分析**：需要至少连续两年的数据
 - **环比分析**：需要足够的历史数据周期
 - **使用 LAG 函数**：LAG(value, 1) 用于环比，LAG(value, 12) 用于同比
+
+### 【数值格式化规则】：
+- **所有数值列必须保留两位小数**：在 SELECT 语句中，所有数值类型的列（包括聚合函数结果）都必须使用 ROUND() 函数保留两位小数
+- **格式示例**：
+  - 原始列：`SELECT "销售额"` → 应改为：`SELECT ROUND("销售额", 2) AS "销售额"`
+  - 聚合函数：`SELECT SUM("金额") AS "总金额"` → 应改为：`SELECT ROUND(SUM("金额"), 2) AS "总金额"`
+  - 计算列：`SELECT "单价" * "数量" AS "小计"` → 应改为：`SELECT ROUND("单价" * "数量", 2) AS "小计"`
+- **必须对所有数值结果应用 ROUND(column, 2)**，确保输出结果统一保留两位小数
 """
 
 _DUCKDB_RULES_EN = """
@@ -67,16 +80,31 @@ _DUCKDB_RULES_EN = """
 2. Columns in ORDER BY must be properly selected in preceding CTE or query
 3. Ensure column reference consistency between CTE layers, especially for columns used in sorting and joining
 
+### 【Subquery Usage Rules】：
+- **NEVER use subqueries in SELECT list that return multiple rows** (causes "More than one row returned" error)
+- **Correct approach**: Use JOIN or window functions instead, if subquery needed must correlate with main query (WHERE condition)
+- **Example**: Calculate percentage use `ROUND(SUM(CASE WHEN condition THEN 1 ELSE 0 END) * 100.0 / COUNT(*), 2)` instead of subquery
+
 ### 【Time Series Analysis】：
 - **Year-over-year**: Requires at least 2 years of continuous data
 - **Month-over-month**: Requires sufficient historical data periods
 - **LAG Function**: LAG(value, 1) for month-over-month, LAG(value, 12) for year-over-year
+
+### 【Numeric Formatting Rules】：
+- **All numeric columns must retain 2 decimal places**: In SELECT statements, all numeric columns (including aggregate function results) must use ROUND() function to retain 2 decimal places
+- **Format examples**:
+  - Original column: `SELECT "sales"` → Should be: `SELECT ROUND("sales", 2) AS "sales"`
+  - Aggregate function: `SELECT SUM("amount") AS "total"` → Should be: `SELECT ROUND(SUM("amount"), 2) AS "total"`
+  - Calculated column: `SELECT "price" * "quantity" AS "subtotal"` → Should be: `SELECT ROUND("price" * "quantity", 2) AS "subtotal"`
+- **Must apply ROUND(column, 2) to all numeric results** to ensure output consistently retains 2 decimal places
 """
 
 # ===== 可复用的约束条件块 =====
 _ANALYSIS_CONSTRAINTS_ZH = """
 表名：{table_name}
 列名规则：中文/数字开头/特殊字符必须用双引号;不要使用 UNION / UNION ALL，如需多个结果请分别查询；时间戳处理使用 to_timestamp() 而非直接 CAST；注释行必须单独成行，不要放在 SQL 语句的同一行
+子查询规则：禁止在 SELECT 列表中使用返回多行的子查询（会导致"More than one row returned"错误），应使用 JOIN 或窗口函数替代
+数值格式化：所有数值列和聚合结果必须使用 ROUND(column, 2) 保留两位小数
 图表优先：默认使用图表，分类对比用bar/pie，时序用line/area，仅明细记录用table
 可用方式：{display_type}
 展示顺序：数据摘要 → 图表可视化 → SQL查询
@@ -85,6 +113,8 @@ _ANALYSIS_CONSTRAINTS_ZH = """
 _ANALYSIS_CONSTRAINTS_EN = """
 Table: {table_name}
 Column rules: Chinese/digit-starting/special chars need double quotes
+Subquery rules: NEVER use subqueries in SELECT list that return multiple rows (causes "More than one row returned" error), use JOIN or window functions instead
+Numeric formatting: All numeric columns and aggregate results must use ROUND(column, 2) to retain 2 decimal places
 Chart priority: Default to charts, categorical use bar/pie, time-series use line/area, only detailed records use table
 Available types: {display_type}
 Display order: Data summary → Chart visualization → SQL query
@@ -96,7 +126,7 @@ _EXAMPLES_ZH = """
 user: 看一下销售趋势
 assistant: 为您展示销售趋势变化：
 <api-call><name>response_line_chart</name><args><sql>
-SELECT "日期", SUM("销售额") AS "销售额"
+SELECT "日期", ROUND(SUM("销售额"), 2) AS "销售额"
 FROM data_analysis_table
 WHERE "日期" IS NOT NULL
 GROUP BY "日期"
@@ -110,7 +140,7 @@ _EXAMPLES_EN = """
 user: Show sales trend
 assistant: Displaying sales trend:
 <api-call><name>response_line_chart</name><args><sql>
-SELECT "date", SUM("sales") AS "sales"
+SELECT "date", ROUND(SUM("sales"), 2) AS "sales"
 FROM data_analysis_table
 WHERE "date" IS NOT NULL
 GROUP BY "date"
