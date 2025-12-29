@@ -24,6 +24,7 @@ export const AutoChart = (props: AutoChartProps) => {
   const [advices, setAdvices] = useState<Advice[]>([]);
   const [renderChartType, setRenderChartType] = useState<ChartType>();
   const chartRef = useRef<ChartRef>();
+  const prevAdvicesRef = useRef<string>(''); // 用于跟踪advices的变化
 
   useEffect(() => {
     const input_charts: CustomChart[] = customCharts;
@@ -82,8 +83,36 @@ export const AutoChart = (props: AutoChartProps) => {
       });
       // 合并模型推荐的图表类型和 ava 推荐的图表类型
       const allAdvices = getMergedAdvices(avaAdvices);
+
+      // 生成advices的唯一标识，用于判断advices是否真正变化
+      const advicesKey = JSON.stringify(allAdvices.map(a => a.type));
+      const advicesChanged = advicesKey !== prevAdvicesRef.current;
+
       setAdvices(allAdvices);
-      setRenderChartType(allAdvices[0]?.type as ChartType);
+
+      // 只在以下情况设置默认图表类型：
+      // 1. renderChartType 未设置（首次加载）
+      // 2. advices 真正发生变化且当前选择的图表类型不在新列表中
+      setRenderChartType(currentType => {
+        if (!currentType) {
+          // 首次加载，设置默认值
+          prevAdvicesRef.current = advicesKey;
+          return allAdvices[0]?.type as ChartType;
+        } else if (advicesChanged) {
+          // advices变化了，检查当前选择的类型是否仍然有效
+          const currentTypeStillValid = allAdvices.some(a => a.type === currentType);
+          if (!currentTypeStillValid) {
+            // 当前选择的类型无效，重置为第一个
+            prevAdvicesRef.current = advicesKey;
+            return allAdvices[0]?.type as ChartType;
+          }
+          // 当前类型仍然有效，保持不变
+          prevAdvicesRef.current = advicesKey;
+          return currentType;
+        }
+        // advices没有变化，保持当前选择
+        return currentType;
+      });
     }
   }, [JSON.stringify(data), advisor, chartType]);
 

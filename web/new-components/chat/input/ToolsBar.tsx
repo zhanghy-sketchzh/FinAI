@@ -5,6 +5,7 @@ import type { UploadFile } from 'antd';
 import { Modal, Spin, Tooltip, message } from 'antd';
 import classNames from 'classnames';
 import Image from 'next/image';
+import { useSearchParams } from 'next/navigation';
 import React, { useContext, useMemo, useState } from 'react';
 import { useTranslation } from 'react-i18next';
 
@@ -26,6 +27,8 @@ const ToolsBar: React.FC<{
   onLoadingChange?: (loading: boolean) => void;
 }> = ({ ctrl, onLoadingChange }) => {
   const { t } = useTranslation();
+  const searchParams = useSearchParams();
+  const chatId = searchParams?.get('id') ?? '';
 
   const {
     history,
@@ -203,15 +206,23 @@ const ToolsBar: React.FC<{
           return resourceValue.file_name || '';
         }
       }
-      // Fall back to currentDialogue.select_param if resourceValue doesn't have file_name
-      return JSON.parse(currentDialogue.select_param).file_name || '';
+      // Fall back to currentDialogue.select_param only if conv_uid matches current chatId
+      if (currentDialogue?.select_param && currentDialogue?.conv_uid === chatId) {
+        return JSON.parse(currentDialogue.select_param).file_name || '';
+      }
+      return '';
     } catch {
       return '';
     }
-  }, [resourceValue, currentDialogue.select_param]);
+  }, [resourceValue, currentDialogue?.select_param, currentDialogue?.conv_uid, chatId]);
 
   const ResourceItemsDisplay = () => {
-    const resources = parseResourceValue(resourceValue) || parseResourceValue(currentDialogue.select_param) || [];
+    // 只有当 currentDialogue.conv_uid 匹配当前 chatId 时才使用 currentDialogue.select_param
+    const selectParam =
+      currentDialogue?.select_param && currentDialogue?.conv_uid === chatId
+        ? currentDialogue.select_param
+        : null;
+    const resources = parseResourceValue(resourceValue) || parseResourceValue(selectParam) || [];
 
     if (resources.length === 0) return null;
 

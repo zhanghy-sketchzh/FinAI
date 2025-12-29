@@ -148,13 +148,17 @@ const Chat: React.FC = () => {
     );
   }, [appInfo, dbName, knowledgeId, model]);
 
-  // 当 chatId 变化时，重置 resourceValue（新会话没有上传文件）
+  // 当 chatId 变化时，重置所有相关状态（新会话没有上传文件和历史记录）
   useEffect(() => {
     if (chatId) {
       // 重置 resourceValue，让新会话可以重新上传文件
       setResourceValue(null);
+      // 重置历史记录，确保新会话开始时是空的
+      setHistory([]);
+      // 重置 order
+      order.current = 1;
     }
-  }, [chatId]);
+  }, [chatId, setResourceValue, setHistory]);
 
   useEffect(() => {
     // 仅初始化执行，防止dashboard页面无法切换状态

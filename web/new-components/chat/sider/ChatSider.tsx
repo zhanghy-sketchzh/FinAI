@@ -1,9 +1,10 @@
 import { ChatContext } from '@/app/chat-context';
 import { apiInterceptors, delDialogue, newDialogue } from '@/client/api';
+import { ChatContentContext } from '@/pages/chat';
 import { DarkSvg, SunnySvg } from '@/components/icons';
 import UserBar from '@/new-components/layout/UserBar';
 import { IChatDialogueSchema } from '@/types/chat';
-import { STORAGE_LANG_KEY, STORAGE_THEME_KEY } from '@/utils/constants/index';
+import { STORAGE_INIT_MESSAGE_KET, STORAGE_LANG_KEY, STORAGE_THEME_KEY } from '@/utils/constants/index';
 import Icon, {
   CaretLeftOutlined,
   CaretRightOutlined,
@@ -154,10 +155,17 @@ const ChatSider: React.FC<{
   const scene = searchParams?.get('scene') ?? '';
   const { t, i18n } = useTranslation();
   const { mode, setMode, model, setCurrentDialogInfo } = useContext(ChatContext);
+  const { setResourceValue, setHistory } = useContext(ChatContentContext);
   const [collapsed, setCollapsed] = useState<boolean>(scene === 'chat_dashboard');
 
   // 新建会话
   const handleNewChat = useCallback(async () => {
+    // 清除所有相关状态，确保创建全新的对话
+    setResourceValue?.(null);
+    setHistory?.([]);
+    // 清除初始化消息
+    localStorage.removeItem(STORAGE_INIT_MESSAGE_KET);
+
     const [, res] = await apiInterceptors(newDialogue({ chat_mode: 'chat_excel', model }));
     if (res) {
       setCurrentDialogInfo?.({
@@ -171,10 +179,11 @@ const ChatSider: React.FC<{
           app_code: '',
         }),
       );
-      router.push(`/chat?scene=chat_excel&id=${res.conv_uid}${model ? `&model=${model}` : ''}`);
+      // 使用 replace 而不是 push，避免浏览器历史记录
+      router.replace(`/chat?scene=chat_excel&id=${res.conv_uid}${model ? `&model=${model}` : ''}`);
       refresh?.();
     }
-  }, [model, router, setCurrentDialogInfo, refresh]);
+  }, [model, router, setCurrentDialogInfo, refresh, setResourceValue, setHistory]);
 
   // 切换主题
   const handleToggleTheme = useCallback(() => {

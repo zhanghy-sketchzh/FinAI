@@ -12,9 +12,13 @@ function ChatExcel({ onComplete }: Props) {
 
   if (scene !== 'chat_excel') return null;
 
+  // 只有当 currentDialogue 存在且 conv_uid 匹配当前 chatId 时才显示已上传文件
+  // 这样可以确保新会话时不会显示上一个会话的文件信息
+  const hasUploadedFile = currentDialogue?.conv_uid === chatId && currentDialogue?.select_param;
+
   return (
     <div className='max-w-md h-full relative'>
-      {currentDialogue ? (
+      {hasUploadedFile ? (
         <div className='flex h-8 overflow-hidden rounded'>
           <div className='flex items-center justify-center px-2 bg-gray-600 text-lg'>
             <LinkOutlined className='text-white' />

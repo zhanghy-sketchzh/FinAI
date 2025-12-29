@@ -29,17 +29,6 @@ provider = "proxy/siliconflow"
 api_key = "sk-knrjwaimdemmawhqyjntgztumpusjmkotbsczdxllgmroltg"
 
 
-[[models.llms]]
-name = "deepseek-r1:70b"
-provider = "proxy/custom_ollama"
-api_base = "http://tafapi.woa.com:80/api/generate"
-auth_token = "token-user1"
-
-[[models.llms]]
-name = "deepseek-ai/DeepSeek-R1-Distill-Qwen-32B"
-provider = "proxy/siliconflow"
-api_key = "sk-knrjwaimdemmawhqyjntgztumpusjmkotbsczdxllgmroltg"
-
 [[models.embeddings]]
 name = "BAAI/bge-large-zh-v1.5"
 provider = "proxy/openai"

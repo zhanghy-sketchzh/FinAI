@@ -158,6 +158,7 @@ class ChatExcel(BaseChat):
         self._database_file_id = database_file_id
         self._query_rewrite_result = None
         self._last_sql_error = None
+        self._current_suggested_questions = []
 
         self.api_call = ApiCall()
         super().__init__(chat_param=chat_param, system_app=system_app)
@@ -1055,7 +1056,13 @@ class ChatExcel(BaseChat):
             ai_full_response = self._combine_thinking_and_text(final_output, view_msg)
             return ai_full_response, view_msg
 
-        summary_text = await self._generate_result_summary(text_msg, view_msg)
+        summary_result = await self._generate_result_summary(text_msg, view_msg)
+        
+        summary_text = summary_result.get("summary", "") if isinstance(summary_result, dict) else ""
+        suggested_questions = summary_result.get("suggested_questions", []) if isinstance(summary_result, dict) else []
+        
+        # 保存推荐问题到实例变量，供前端获取
+        self._current_suggested_questions = suggested_questions
 
         if summary_text:
             import re
@@ -1068,6 +1075,11 @@ class ChatExcel(BaseChat):
                 view_msg = f"{summary_text}\n\n{all_chart_views}"
             else:
                 view_msg = f"{summary_text}\n\n{view_msg}"
+            
+            # 如果有推荐问题，在view_msg末尾添加特殊标记（前端可以解析）
+            if suggested_questions:
+                questions_json = json.dumps({"suggested_questions": suggested_questions}, ensure_ascii=False)
+                view_msg += f"\n\n<!--SUGGESTED_QUESTIONS:{questions_json}-->"
 
         view_msg = final_output.gen_text_with_thinking(new_text=view_msg)
         ai_full_response = self._combine_thinking_and_text(final_output, view_msg)
@@ -1135,7 +1147,9 @@ class ChatExcel(BaseChat):
             logger.warning(f"格式化Query改写thinking失败: {e}")
             return ""
 
-    async def _generate_result_summary(self, original_text: str, view_msg: str) -> str:
+    async def _generate_result_summary(
+        self, original_text: str, view_msg: str
+    ) -> Dict[str, Any]:
         try:
             import html
             import json
@@ -1217,35 +1231,130 @@ class ChatExcel(BaseChat):
                 )
                 sql_results_text += f"{result_label}：\n{result_json}\n"
 
+            # 获取数据schema信息，用于生成推荐问题
+            data_schema_info = ""
+            select_param_dict = self.select_param
+            if isinstance(self.select_param, str):
+                try:
+                    select_param_dict = json.loads(self.select_param)
+                except Exception:
+                    select_param_dict = {}
+            
+            if isinstance(select_param_dict, dict):
+                data_schema_json = select_param_dict.get("data_schema_json")
+                if data_schema_json:
+                    try:
+                        schema_obj = (
+                            json.loads(data_schema_json)
+                            if isinstance(data_schema_json, str)
+                            else data_schema_json
+                        )
+                        table_description = schema_obj.get("table_description", "")
+                        columns_summary = []
+                        # 包含所有列，不限制数量
+                        for col in schema_obj.get("columns", []):
+                            col_name = col.get("column_name", "")
+                            semantic_type = col.get("semantic_type", "")
+                            description = col.get("description", "")
+                            columns_summary.append(
+                                f"- {col_name} ({semantic_type}): {description}"
+                            )
+                        
+                        # 根据语言切换标签
+                        if is_english:
+                            data_schema_info = f"""
+=== Data Table Information ===
+Table Description: {table_description}
+All Columns:
+{chr(10).join(columns_summary)}
+"""
+                        else:
+                            data_schema_info = f"""
+=== 数据表信息 ===
+表描述: {table_description}
+所有字段:
+{chr(10).join(columns_summary)}
+"""
+                    except Exception as e:
+                        logger.warning(f"解析data_schema_json失败: {e}")
+
             if is_english:
                 summary_prompt = f"""{history_context}
 === User's Current Question ===
 {self.current_user_input.last_text}
 {sql_results_text}
+{data_schema_info}
 **IMPORTANT - Language Requirement**:
 - The user's question is in ENGLISH
 - You MUST respond in ENGLISH
 - Your answer MUST be in ENGLISH, not Chinese
-- Based on the conversation history and all the SQL query results above, 
-  summarize and answer the user's current question in one sentence in ENGLISH.
-- If the current question is a follow-up or continuation of previous topics, 
-  reflect continuity and contextual relationship in your summary.
-- Use ENGLISH language style consistent with the user's question.
 
-Answer:"""  # noqa: E501
+**Task**:
+Based on the conversation history, current question, SQL query results, and data schema information above, please generate:
+1. A concise summary answering the user's current question (one sentence)
+2. 5 follow-up questions that would help users explore the data further based on the current analysis results
+
+**Output Format**:
+Please output a JSON object with the following structure:
+```json
+{{
+  "summary": "Your one-sentence summary answering the user's question",
+  "suggested_questions": [
+    "Question 1 (based on current analysis, e.g., deeper analysis, comparison, trend)",
+    "Question 2",
+    "Question 3",
+    "Question 4",
+    "Question 5"
+  ]
+}}
+```
+
+**Requirements for suggested_questions**:
+- Questions should be based on the current analysis results and conversation context
+- Questions should help users explore deeper insights or related aspects
+- Questions should be moderate difficulty (not too simple, not too complex)
+- Questions should be diverse in type (statistical, comparative, trend analysis, filtering, etc.)
+- All questions must be in ENGLISH
+
+Please output the JSON directly, without any other text:"""  # noqa: E501
             else:
                 summary_prompt = f"""{history_context}
 === 用户当前问题 ===
 {self.current_user_input.last_text}
 {sql_results_text}
+{data_schema_info}
 **重要 - 语言要求**：
 - 用户的问题是**中文**
 - 你必须用**中文**回答
-- 请根据历史对话和上述所有SQL查询结果，用一句话总结并完整回答用户的当前问题。
-- 如果当前问题是追问或延续之前的话题，请在总结中体现出连贯性和上下文关系。
-- 语言风格和用户问题一致，使用**中文**。
 
-回答："""
+**任务**：
+根据上述历史对话、当前问题、SQL查询结果和数据表信息，请生成：
+1. 一句话总结，完整回答用户的当前问题
+2. 5个基于当前分析结果的深入问题，帮助用户进一步探索数据
+
+**输出格式**：
+请输出一个JSON对象，格式如下：
+```json
+{{
+  "summary": "您的一句话总结，完整回答用户的问题",
+  "suggested_questions": [
+    "问题1（基于当前分析结果，如：深入分析、对比、趋势等）",
+    "问题2",
+    "问题3",
+    "问题4",
+    "问题5"
+  ]
+}}
+```
+
+**推荐问题的要求**：
+- 问题应该基于当前分析结果和对话上下文
+- 问题应该帮助用户探索更深入的洞察或相关方面
+- 问题难度适中（不要过于简单，也不要过于复杂）
+- 问题类型应该多样化（统计类、对比类、趋势分析类、筛选类等）
+- 所有问题必须使用**中文**
+
+请直接输出JSON，不要有其他文字："""
 
             summary_request = ModelRequest(
                 model=self.llm_model,
@@ -1255,20 +1364,67 @@ Answer:"""  # noqa: E501
                     )
                 ],
                 temperature=0.3,
-                max_new_tokens=1024,
+                max_new_tokens=2048,
             )
 
             if self.llm_client:
                 summary_output = await self.llm_client.generate(summary_request)
                 if summary_output and summary_output.text:
-                    summary_text = summary_output.text.strip()
-                    logger.info(f"生成结果总结: {summary_text}")
-                    return summary_text
+                    output_text = summary_output.text.strip()
+                    logger.info(f"生成结果总结和推荐问题: {output_text[:200]}...")
+                    
+                    # 解析JSON响应
+                    try:
+                        # 提取JSON部分
+                        json_str = output_text
+                        if "```json" in json_str.lower():
+                            start_idx = json_str.lower().find("```json")
+                            if start_idx >= 0:
+                                content_start = json_str.find("\n", start_idx) + 1
+                                if content_start > 0:
+                                    end_idx = json_str.find("```", content_start)
+                                    if end_idx > content_start:
+                                        json_str = json_str[content_start:end_idx].strip()
+                        
+                        if "```" in json_str and "```json" not in json_str.lower():
+                            start_idx = json_str.find("```")
+                            content_start = json_str.find("\n", start_idx) + 1
+                            if content_start > 0:
+                                end_idx = json_str.find("```", content_start)
+                                if end_idx > content_start:
+                                    json_str = json_str[content_start:end_idx].strip()
+                        
+                        # 尝试提取JSON对象
+                        if "{" in json_str and "}" in json_str:
+                            start = json_str.find("{")
+                            end = json_str.rfind("}") + 1
+                            if start >= 0 and end > start:
+                                json_str = json_str[start:end]
+                        
+                        result = json.loads(json_str)
+                        summary_text = result.get("summary", "")
+                        suggested_questions = result.get("suggested_questions", [])
+                        
+                        if not summary_text:
+                            # 如果没有summary，使用原始输出
+                            summary_text = output_text
+                        
+                        return {
+                            "summary": summary_text,
+                            "suggested_questions": suggested_questions[:5] if isinstance(suggested_questions, list) else [],
+                        }
+                    except json.JSONDecodeError as e:
+                        logger.warning(f"解析总结JSON失败: {e}，使用原始文本")
+                        # 如果解析失败，返回原始文本作为summary
+                        return {
+                            "summary": output_text,
+                            "suggested_questions": [],
+                        }
             else:
                 logger.warning("llm_client未初始化，无法生成总结")
 
-            return ""
+            return {"summary": "", "suggested_questions": []}
 
         except Exception as e:
             logger.warning(f"生成结果总结失败: {e}", exc_info=True)
-            return ""
+            return {"summary": "", "suggested_questions": []}

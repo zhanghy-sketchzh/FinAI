@@ -1703,15 +1703,16 @@ class ExcelAutoRegisterService:
 === 数据示例（前3行） ===
 {sample_data_str}
 
-请生成一个简化的JSON格式，只包含需要业务理解的核心信息：
+请生成一个简化的JSON格式，包含以下信息：
 
 1. **table_description**: 表的整体描述，说明这是什么数据，适合做什么分析
 2. **columns**: 每个字段的业务理解信息（只需要以下字段）：
    - column_name: 字段名（必须使用完整的字段名，不能删减）
    - semantic_type: 语义类型（如：时间维度、地域维度、数值指标、分类维度、标识字段等）
    - description: 字段的业务含义和用途描述
+3. **suggested_questions**: 生成5个难度适中的推荐问题，帮助用户快速了解数据
 
-请严格按照以下JSON格式输出（只包含上述字段）：
+请严格按照以下JSON格式输出：
 
 ```json
 {{
@@ -1722,6 +1723,13 @@ class ExcelAutoRegisterService:
       "semantic_type": "时间维度/地域维度/数值指标/分类维度/标识字段",
       "description": "详细的业务含义描述"
     }}
+  ],
+  "suggested_questions": [
+    "问题1（统计汇总类，如：总数、平均值等）",
+    "问题2（分组分析类，如：按某个维度分组统计）",
+    "问题3（趋势分析类，如有时间字段）",
+    "问题4（对比分析类，如：不同类别的对比）",
+    "问题5（筛选查询类，如：满足某个条件的数据）"
   ]
 }}
 ```
@@ -1730,6 +1738,8 @@ class ExcelAutoRegisterService:
 1. 深入理解字段的业务含义，不要只是简单重复字段名
 2. semantic_type要准确，这对后续分析非常重要
 3. column_name必须与数据表中的字段名完全一致
+4. suggested_questions应该基于数据集的实际特点，难度适中（不要过于简单，也不要过于复杂），问题类型应该多样化
+5. 推荐问题应该用自然的中文表达，简洁明了，可以直接用于数据分析
 
 请直接输出JSON，不要有其他文字：
 """
@@ -1842,15 +1852,83 @@ class ExcelAutoRegisterService:
 
             enriched_columns.append(col_info)
 
+        # 从LLM返回的schema中提取推荐问题，如果没有则使用备用方法生成
+        suggested_questions = schema.get("suggested_questions", [])
+        if not suggested_questions or len(suggested_questions) < 5:
+            # 如果LLM没有生成推荐问题或数量不足，使用备用方法
+            suggested_questions = self._generate_fallback_questions(
+                enriched_columns, df
+            )
+
         return json.dumps(
             {
                 "table_name": table_name,
                 "table_description": schema.get("table_description", ""),
                 "columns": enriched_columns,
+                "suggested_questions": suggested_questions[:5],  # 确保最多5个
             },
             ensure_ascii=False,
             indent=2,
         )
+
+    def _generate_fallback_questions(
+        self, columns: List[Dict], df: pd.DataFrame
+    ) -> List[str]:
+        """
+        当LLM生成失败时，使用规则生成基础的推荐问题
+
+        Args:
+            columns: 字段信息列表
+            df: DataFrame对象
+
+        Returns:
+            推荐问题列表
+        """
+        questions = []
+        row_count = len(df)
+
+        # 找出数值指标字段和分类维度字段
+        numeric_cols = [
+            col.get("column_name")
+            for col in columns
+            if "指标" in col.get("semantic_type", "") or "数值" in col.get("semantic_type", "")
+        ]
+        categorical_cols = [
+            col.get("column_name")
+            for col in columns
+            if "维度" in col.get("semantic_type", "") or "分类" in col.get("semantic_type", "")
+        ]
+        time_cols = [
+            col.get("column_name")
+            for col in columns
+            if "时间" in col.get("semantic_type", "") or "日期" in col.get("semantic_type", "")
+        ]
+
+        # 生成基础问题
+        if numeric_cols:
+            questions.append(f"数据总共有多少条记录？")
+            if len(numeric_cols) > 0:
+                questions.append(f"{numeric_cols[0]}的平均值是多少？")
+            if len(numeric_cols) > 0 and len(categorical_cols) > 0:
+                questions.append(f"按{categorical_cols[0]}分组，统计{numeric_cols[0]}的总和")
+
+        if categorical_cols:
+            if len(categorical_cols) > 0:
+                questions.append(f"{categorical_cols[0]}的分布情况如何？")
+
+        if time_cols and len(time_cols) > 0:
+            questions.append(f"按{time_cols[0]}统计数据的变化趋势")
+
+        # 如果问题不足5个，补充通用问题
+        while len(questions) < 5:
+            if len(questions) == 0:
+                questions.append("数据的基本统计信息是什么？")
+            elif len(questions) == 1:
+                questions.append("数据的主要特征有哪些？")
+            else:
+                break
+
+        return questions[:5]
 
     def _call_llm_for_schema(self, prompt: str) -> str:
         """调用LLM生成Schema JSON"""

@@ -1,6 +1,7 @@
 import { ChatContext } from '@/app/chat-context';
 import { apiInterceptors, collectApp, newDialogue, unCollectApp } from '@/client/api';
 import { ChatContentContext } from '@/pages/chat';
+import { STORAGE_INIT_MESSAGE_KET } from '@/utils';
 import { LoadingOutlined, PlusOutlined, StarFilled, StarOutlined } from '@ant-design/icons';
 import { Spin, Tag, Typography } from 'antd';
 import { useRouter } from 'next/router';
@@ -13,8 +14,18 @@ import AppDefaultIcon from '../../common/AppDefaultIcon';
 const tagColors = ['magenta', 'orange', 'geekblue', 'purple', 'cyan', 'green'];
 
 const ChatHeader: React.FC<{ isScrollToTop: boolean }> = ({ isScrollToTop }) => {
-  const { appInfo, refreshAppInfo, handleChat, scrollRef, temperatureValue, resourceValue, currentDialogue, refreshDialogList } =
-    useContext(ChatContentContext);
+  const {
+    appInfo,
+    refreshAppInfo,
+    handleChat,
+    scrollRef,
+    temperatureValue,
+    resourceValue,
+    currentDialogue,
+    refreshDialogList,
+    setResourceValue,
+    setHistory,
+  } = useContext(ChatContentContext);
   const { model, setCurrentDialogInfo } = useContext(ChatContext);
   const router = useRouter();
 
@@ -22,6 +33,12 @@ const ChatHeader: React.FC<{ isScrollToTop: boolean }> = ({ isScrollToTop }) => 
 
   // 新建会话
   const handleNewChat = useCallback(async () => {
+    // 清除所有相关状态，确保创建全新的对话
+    setResourceValue?.(null);
+    setHistory?.([]);
+    // 清除初始化消息
+    localStorage.removeItem(STORAGE_INIT_MESSAGE_KET);
+
     const [, res] = await apiInterceptors(newDialogue({ chat_mode: 'chat_excel', model }));
     if (res) {
       setCurrentDialogInfo?.({
@@ -35,14 +52,30 @@ const ChatHeader: React.FC<{ isScrollToTop: boolean }> = ({ isScrollToTop }) => 
           app_code: '',
         }),
       );
-      router.push(`/chat?scene=chat_excel&id=${res.conv_uid}${model ? `&model=${model}` : ''}`);
+      // 使用 replace 而不是 push，避免浏览器历史记录
+      router.replace(`/chat?scene=chat_excel&id=${res.conv_uid}${model ? `&model=${model}` : ''}`);
       refreshDialogList?.();
     }
-  }, [model, router, setCurrentDialogInfo, refreshDialogList]);
+  }, [model, router, setCurrentDialogInfo, refreshDialogList, setResourceValue, setHistory]);
 
   const appScene = useMemo(() => {
     return appInfo?.team_context?.chat_scene || 'chat_agent';
   }, [appInfo]);
+
+  // 获取应用名称和描述，如果是 chat_excel 则使用翻译
+  const displayAppName = useMemo(() => {
+    if (appScene === 'chat_excel') {
+      return t('chat_excel_app_name');
+    }
+    return appInfo?.app_name;
+  }, [appScene, appInfo?.app_name, t]);
+
+  const displayAppDescribe = useMemo(() => {
+    if (appScene === 'chat_excel') {
+      return t('chat_excel_app_describe');
+    }
+    return appInfo?.app_describe;
+  }, [appScene, appInfo?.app_describe, t]);
 
   // 应用收藏状态
   const isCollected = useMemo(() => {
@@ -82,11 +115,7 @@ const ChatHeader: React.FC<{ isScrollToTop: boolean }> = ({ isScrollToTop }) => 
           </div>
           <div className='flex flex-col flex-1'>
             <div className='flex items-center text-base text-[#1c2533] dark:text-[rgba(255,255,255,0.85)] font-semibold gap-2'>
-              <span>{appInfo?.app_name}</span>
-              <div className='flex gap-1'>
-                {appInfo?.team_mode && <Tag color='green'>{appInfo?.team_mode}</Tag>}
-                {appInfo?.team_context?.chat_scene && <Tag color='cyan'>{appInfo?.team_context?.chat_scene}</Tag>}
-              </div>
+              <span>{displayAppName}</span>
             </div>
             <Typography.Text
               className='text-sm text-[#525964] dark:text-[rgba(255,255,255,0.65)] leading-6'
@@ -94,7 +123,7 @@ const ChatHeader: React.FC<{ isScrollToTop: boolean }> = ({ isScrollToTop }) => 
                 tooltip: true,
               }}
             >
-              {appInfo?.app_describe}
+              {displayAppDescribe}
             </Typography.Text>
           </div>
         </div>
@@ -173,11 +202,7 @@ const ChatHeader: React.FC<{ isScrollToTop: boolean }> = ({ isScrollToTop }) => 
             <AppDefaultIcon scene={appScene} />
           </div>
           <div className='flex items-center text-base text-[#1c2533] dark:text-[rgba(255,255,255,0.85)] font-semibold gap-2'>
-            <span>{appInfo?.app_name}</span>
-            <div className='flex gap-1'>
-              {appInfo?.team_mode && <Tag color='green'>{appInfo?.team_mode}</Tag>}
-              {appInfo?.team_context?.chat_scene && <Tag color='cyan'>{appInfo?.team_context?.chat_scene}</Tag>}
-            </div>
+            <span>{displayAppName}</span>
           </div>
         </div>
         <div className='flex items-center gap-4'>

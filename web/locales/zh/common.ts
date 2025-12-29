@@ -530,4 +530,7 @@ export const CommonZh: Resources['translation'] = {
   permission_management: '权限管理',
   admin_employee_id: '管理员（工号，去前缀0）：',
   view_details: '查看详情',
+  // Chat Excel
+  chat_excel_app_name: 'Chat Excel',
+  chat_excel_app_describe: '通过自然语言进行Excel分析',
 } as const;

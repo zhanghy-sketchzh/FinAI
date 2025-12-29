@@ -527,4 +527,7 @@ export const CommonEn = {
   permission_management: 'Permission Management',
   admin_employee_id: 'Admin (Employee ID, remove leading 0):',
   view_details: 'View Details',
+  // Chat Excel
+  chat_excel_app_name: 'Chat Excel',
+  chat_excel_app_describe: 'Excel analysis through natural language',
 } as const;
