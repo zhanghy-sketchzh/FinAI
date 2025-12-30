@@ -13,7 +13,7 @@ import ToolsBar from './ToolsBar';
 const tagColors = ['geekblue', 'purple', 'cyan', 'green', 'orange'];
 
 const ChatInputPanel: React.ForwardRefRenderFunction<any, { ctrl: AbortController }> = ({ ctrl }, ref) => {
-  const { t } = useTranslation();
+  const { t, i18n } = useTranslation();
   const {
     replyLoading,
     handleChat,
@@ -40,6 +40,7 @@ const ChatInputPanel: React.ForwardRefRenderFunction<any, { ctrl: AbortControlle
   const [isQuestionsCollapsed, setIsQuestionsCollapsed] = useState<boolean>(false);
   const prevConvUidRef = useRef<string>(''); // 用于跟踪会话ID的变化
   const lastProcessedMessageRef = useRef<string>(''); // 用于跟踪已处理的消息，避免重复处理
+  const prevLanguageRef = useRef<string>(i18n.language); // 用于跟踪语言变化
 
   const submitCountRef = useRef(0);
 
@@ -60,6 +61,14 @@ const ChatInputPanel: React.ForwardRefRenderFunction<any, { ctrl: AbortControlle
       prevConvUidRef.current = currentConvUid;
     }
   }, [currentDialogue?.conv_uid]);
+
+  // 当语言切换时，清除动态推荐问题，使用对应语言的初始推荐问题
+  useEffect(() => {
+    if (i18n.language !== prevLanguageRef.current) {
+      setDynamicSuggestedQuestions([]);
+      prevLanguageRef.current = i18n.language;
+    }
+  }, [i18n.language]);
 
   // 从最新的消息响应中提取动态推荐问题
   useEffect(() => {
@@ -177,12 +186,28 @@ const ChatInputPanel: React.ForwardRefRenderFunction<any, { ctrl: AbortControlle
         return [];
       }
 
-      const questions = schema.suggested_questions || [];
+      // 根据用户语言选择推荐问题版本
+      const isEnglish = i18n.language === 'en';
+      let questions: string[] = [];
+      
+      if (isEnglish) {
+        // 优先使用英文版本
+        questions = schema.suggested_questions_en || [];
+      } else {
+        // 使用中文版本
+        questions = schema.suggested_questions_zh || [];
+      }
+      
+      // 兼容旧格式：如果新格式没有，尝试使用旧格式 suggested_questions（作为中文版本）
+      if (!questions || questions.length === 0) {
+        questions = schema.suggested_questions || [];
+      }
+      
       return Array.isArray(questions) ? questions.slice(0, 5) : [];
     } catch (error) {
       return [];
     }
-  }, [scene, resourceValue, currentDialogue, chatId]);
+  }, [scene, resourceValue, currentDialogue, chatId, i18n.language]);
 
   // 优先使用动态推荐问题，如果没有则使用初始推荐问题
   const suggestedQuestions = useMemo(() => {

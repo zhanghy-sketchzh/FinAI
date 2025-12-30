@@ -1711,6 +1711,8 @@ class ExcelAutoRegisterService:
    - semantic_type: 语义类型（如：时间维度、地域维度、数值指标、分类维度、标识字段等）
    - description: 字段的业务含义和用途描述
 3. **suggested_questions**: 生成5个难度适中的推荐问题，帮助用户快速了解数据
+   - **suggested_questions_zh**: 中文版本的5个推荐问题
+   - **suggested_questions_en**: 英文版本的5个推荐问题（与中文问题对应，内容相同但语言不同）
 
 请严格按照以下JSON格式输出：
 
@@ -1724,12 +1726,19 @@ class ExcelAutoRegisterService:
       "description": "详细的业务含义描述"
     }}
   ],
-  "suggested_questions": [
+  "suggested_questions_zh": [
     "问题1（统计汇总类，如：总数、平均值等）",
     "问题2（分组分析类，如：按某个维度分组统计）",
     "问题3（趋势分析类，如有时间字段）",
     "问题4（对比分析类，如：不同类别的对比）",
     "问题5（筛选查询类，如：满足某个条件的数据）"
+  ],
+  "suggested_questions_en": [
+    "Question 1 (statistical summary, e.g., total, average, etc.)",
+    "Question 2 (grouping analysis, e.g., statistics grouped by a dimension)",
+    "Question 3 (trend analysis, if there is a time field)",
+    "Question 4 (comparative analysis, e.g., comparison of different categories)",
+    "Question 5 (filtering query, e.g., data meeting certain conditions)"
   ]
 }}
 ```
@@ -1738,8 +1747,9 @@ class ExcelAutoRegisterService:
 1. 深入理解字段的业务含义，不要只是简单重复字段名
 2. semantic_type要准确，这对后续分析非常重要
 3. column_name必须与数据表中的字段名完全一致
-4. suggested_questions应该基于数据集的实际特点，难度适中（不要过于简单，也不要过于复杂），问题类型应该多样化
-5. 推荐问题应该用自然的中文表达，简洁明了，可以直接用于数据分析
+4. suggested_questions_zh 和 suggested_questions_en 应该基于数据集的实际特点，难度适中（不要过于简单，也不要过于复杂），问题类型应该多样化
+5. 中文推荐问题应该用自然的中文表达，英文推荐问题应该用自然的英文表达，简洁明了，可以直接用于数据分析
+6. 中英文问题应该一一对应，内容相同但语言不同
 
 请直接输出JSON，不要有其他文字：
 """
@@ -1852,11 +1862,24 @@ class ExcelAutoRegisterService:
 
             enriched_columns.append(col_info)
 
-        # 从LLM返回的schema中提取推荐问题，如果没有则使用备用方法生成
-        suggested_questions = schema.get("suggested_questions", [])
-        if not suggested_questions or len(suggested_questions) < 5:
-            # 如果LLM没有生成推荐问题或数量不足，使用备用方法
-            suggested_questions = self._generate_fallback_questions(
+        # 从LLM返回的schema中提取推荐问题，支持中英两个版本
+        suggested_questions_zh = schema.get("suggested_questions_zh", [])
+        suggested_questions_en = schema.get("suggested_questions_en", [])
+        
+        # 兼容旧格式：如果只有 suggested_questions，则作为中文版本
+        if not suggested_questions_zh and schema.get("suggested_questions"):
+            suggested_questions_zh = schema.get("suggested_questions", [])
+        
+        # 如果中文版本没有或数量不足，使用备用方法生成
+        if not suggested_questions_zh or len(suggested_questions_zh) < 5:
+            suggested_questions_zh = self._generate_fallback_questions(
+                enriched_columns, df
+            )
+        
+        # 如果英文版本没有或数量不足，尝试从中文翻译或使用备用方法
+        if not suggested_questions_en or len(suggested_questions_en) < 5:
+            # 如果有中文版本，可以尝试翻译（这里先使用备用方法生成英文版本）
+            suggested_questions_en = self._generate_fallback_questions_en(
                 enriched_columns, df
             )
 
@@ -1865,7 +1888,8 @@ class ExcelAutoRegisterService:
                 "table_name": table_name,
                 "table_description": schema.get("table_description", ""),
                 "columns": enriched_columns,
-                "suggested_questions": suggested_questions[:5],  # 确保最多5个
+                "suggested_questions_zh": suggested_questions_zh[:5],  # 确保最多5个
+                "suggested_questions_en": suggested_questions_en[:5],  # 确保最多5个
             },
             ensure_ascii=False,
             indent=2,
@@ -1917,7 +1941,59 @@ class ExcelAutoRegisterService:
                 questions.append(f"{categorical_cols[0]}的分布情况如何？")
 
         if time_cols and len(time_cols) > 0:
-            questions.append(f"按{time_cols[0]}统计数据的变化趋势")
+            questions.append(f"按{time_cols[0]}分析数据的变化趋势")
+
+        return questions[:5]  # 确保最多5个
+
+    def _generate_fallback_questions_en(
+        self, columns: List[Dict], df: pd.DataFrame
+    ) -> List[str]:
+        """
+        Generate fallback suggested questions in English when LLM generation fails
+
+        Args:
+            columns: Column information list
+            df: DataFrame object
+
+        Returns:
+            List of suggested questions in English
+        """
+        questions = []
+        row_count = len(df)
+
+        # Find numeric indicator fields and categorical dimension fields
+        numeric_cols = [
+            col.get("column_name")
+            for col in columns
+            if "指标" in col.get("semantic_type", "") or "数值" in col.get("semantic_type", "")
+        ]
+        categorical_cols = [
+            col.get("column_name")
+            for col in columns
+            if "维度" in col.get("semantic_type", "") or "分类" in col.get("semantic_type", "")
+        ]
+        time_cols = [
+            col.get("column_name")
+            for col in columns
+            if "时间" in col.get("semantic_type", "") or "日期" in col.get("semantic_type", "")
+        ]
+
+        # Generate basic questions
+        if numeric_cols:
+            questions.append("How many records are there in total?")
+            if len(numeric_cols) > 0:
+                questions.append(f"What is the average value of {numeric_cols[0]}?")
+            if len(numeric_cols) > 0 and len(categorical_cols) > 0:
+                questions.append(f"Group by {categorical_cols[0]}, what is the sum of {numeric_cols[0]}?")
+
+        if categorical_cols:
+            if len(categorical_cols) > 0:
+                questions.append(f"What is the distribution of {categorical_cols[0]}?")
+
+        if time_cols and len(time_cols) > 0:
+            questions.append(f"Analyze the trend of data changes by {time_cols[0]}")
+
+        return questions[:5]  # Ensure maximum 5 questions
 
         # 如果问题不足5个，补充通用问题
         while len(questions) < 5:
