@@ -1,5 +1,5 @@
 import { ChatContentContext } from '@/pages/chat';
-import { DownOutlined, LoadingOutlined, UpOutlined } from '@ant-design/icons';
+import { DownOutlined, LoadingOutlined, ReloadOutlined, UpOutlined } from '@ant-design/icons';
 import { Button, Input, Spin, Tag } from 'antd';
 import classNames from 'classnames';
 import { useSearchParams } from 'next/navigation';
@@ -38,6 +38,8 @@ const ChatInputPanel: React.ForwardRefRenderFunction<any, { ctrl: AbortControlle
   const [fileUploading, setFileUploading] = useState<boolean>(false);
   const [dynamicSuggestedQuestions, setDynamicSuggestedQuestions] = useState<string[]>([]);
   const [isQuestionsCollapsed, setIsQuestionsCollapsed] = useState<boolean>(false);
+  const [displayedQuestions, setDisplayedQuestions] = useState<string[]>([]); // 当前显示的问题
+  const [allQuestions, setAllQuestions] = useState<string[]>([]); // 所有9个问题
   const prevConvUidRef = useRef<string>(''); // 用于跟踪会话ID的变化
   const lastProcessedMessageRef = useRef<string>(''); // 用于跟踪已处理的消息，避免重复处理
   const prevLanguageRef = useRef<string>(i18n.language); // 用于跟踪语言变化
@@ -53,9 +55,13 @@ const ChatInputPanel: React.ForwardRefRenderFunction<any, { ctrl: AbortControlle
     const currentConvUid = currentDialogue?.conv_uid || '';
     if (currentConvUid && prevConvUidRef.current && currentConvUid !== prevConvUidRef.current) {
       setDynamicSuggestedQuestions([]);
+      setAllQuestions([]);
+      setDisplayedQuestions([]);
       prevConvUidRef.current = currentConvUid;
     } else if (!currentConvUid && prevConvUidRef.current) {
       setDynamicSuggestedQuestions([]);
+      setAllQuestions([]);
+      setDisplayedQuestions([]);
       prevConvUidRef.current = '';
     } else if (currentConvUid && !prevConvUidRef.current) {
       prevConvUidRef.current = currentConvUid;
@@ -66,6 +72,8 @@ const ChatInputPanel: React.ForwardRefRenderFunction<any, { ctrl: AbortControlle
   useEffect(() => {
     if (i18n.language !== prevLanguageRef.current) {
       setDynamicSuggestedQuestions([]);
+      setAllQuestions([]);
+      setDisplayedQuestions([]);
       prevLanguageRef.current = i18n.language;
     }
   }, [i18n.language]);
@@ -113,7 +121,11 @@ const ChatInputPanel: React.ForwardRefRenderFunction<any, { ctrl: AbortControlle
           const questionsData = JSON.parse(jsonStr);
           const questions = questionsData.suggested_questions || [];
           if (Array.isArray(questions) && questions.length > 0) {
-            setDynamicSuggestedQuestions(questions.slice(0, 3));
+            setAllQuestions(questions);
+            // 从9个问题中随机选择2个简单问题 + 1个开放式问题
+            const selectedQuestions = selectRandomQuestions(questions);
+            setDynamicSuggestedQuestions(selectedQuestions);
+            setDisplayedQuestions(selectedQuestions);
             lastProcessedMessageRef.current = messageHash;
             return;
           }
@@ -125,7 +137,11 @@ const ChatInputPanel: React.ForwardRefRenderFunction<any, { ctrl: AbortControlle
               const questionsData = JSON.parse(suggestedQuestionsMatch[1]);
               const questions = questionsData.suggested_questions || [];
               if (Array.isArray(questions) && questions.length > 0) {
-                setDynamicSuggestedQuestions(questions.slice(0, 3));
+                setAllQuestions(questions);
+                // 从9个问题中随机选择2个简单问题 + 1个开放式问题
+                const selectedQuestions = selectRandomQuestions(questions);
+                setDynamicSuggestedQuestions(selectedQuestions);
+                setDisplayedQuestions(selectedQuestions);
                 lastProcessedMessageRef.current = messageHash;
                 return;
               }
@@ -203,16 +219,61 @@ const ChatInputPanel: React.ForwardRefRenderFunction<any, { ctrl: AbortControlle
         questions = schema.suggested_questions || [];
       }
       
-      return Array.isArray(questions) ? questions.slice(0, 3) : [];
+      return Array.isArray(questions) ? questions : [];
     } catch (error) {
       return [];
     }
   }, [scene, resourceValue, currentDialogue, chatId, i18n.language]);
 
+  // 从9个问题中随机选择2个简单问题 + 1个开放式问题的函数
+  const selectRandomQuestions = (questions: string[]): string[] => {
+    if (questions.length <= 3) {
+      return questions;
+    }
+    // 假设前6个是简单问题，后3个是开放式问题
+    const simpleQuestions = questions.slice(0, 6);
+    const openQuestions = questions.slice(6, 9);
+    
+    // 随机选择2个简单问题
+    const shuffledSimple = [...simpleQuestions].sort(() => Math.random() - 0.5);
+    const selectedSimple = shuffledSimple.slice(0, 2);
+    
+    // 随机选择1个开放式问题
+    const shuffledOpen = [...openQuestions].sort(() => Math.random() - 0.5);
+    const selectedOpen = shuffledOpen.slice(0, 1);
+    
+    return [...selectedSimple, ...selectedOpen];
+  };
+
+  // 刷新推荐问题
+  const handleRefreshQuestions = () => {
+    const questionsToUse = allQuestions.length > 0 ? allQuestions : (initialSuggestedQuestions.length > 0 ? initialSuggestedQuestions : []);
+    if (questionsToUse.length > 0) {
+      const selectedQuestions = selectRandomQuestions(questionsToUse);
+      setDisplayedQuestions(selectedQuestions);
+    }
+  };
+
+  // 当初始推荐问题变化时，更新allQuestions和displayedQuestions
+  useEffect(() => {
+    if (initialSuggestedQuestions.length > 0 && allQuestions.length === 0 && dynamicSuggestedQuestions.length === 0) {
+      setAllQuestions(initialSuggestedQuestions);
+      const selectedQuestions = selectRandomQuestions(initialSuggestedQuestions);
+      setDisplayedQuestions(selectedQuestions);
+    }
+  }, [initialSuggestedQuestions, allQuestions.length, dynamicSuggestedQuestions.length]);
+
   // 优先使用动态推荐问题，如果没有则使用初始推荐问题
   const suggestedQuestions = useMemo(() => {
-    return dynamicSuggestedQuestions.length > 0 ? dynamicSuggestedQuestions : initialSuggestedQuestions;
-  }, [dynamicSuggestedQuestions, initialSuggestedQuestions]);
+    if (dynamicSuggestedQuestions.length > 0) {
+      return displayedQuestions.length > 0 ? displayedQuestions : dynamicSuggestedQuestions;
+    }
+    // 对于初始推荐问题，使用已选择的显示问题
+    if (initialSuggestedQuestions.length > 0) {
+      return displayedQuestions.length > 0 ? displayedQuestions : selectRandomQuestions(initialSuggestedQuestions);
+    }
+    return [];
+  }, [dynamicSuggestedQuestions, initialSuggestedQuestions, displayedQuestions]);
 
   // 处理推荐问题点击
   const handleSuggestedQuestionClick = async (question: string) => {
@@ -281,17 +342,31 @@ const ChatInputPanel: React.ForwardRefRenderFunction<any, { ctrl: AbortControlle
       {/* 推荐问题气泡展示 */}
       {suggestedQuestions.length > 0 && (
         <div className='mb-4 flex flex-col gap-2'>
-          <div
-            className='flex items-center gap-2 cursor-pointer select-none hover:opacity-80 transition-opacity'
-            onClick={() => setIsQuestionsCollapsed(!isQuestionsCollapsed)}
-          >
-            <span className='text-sm text-[#525964] dark:text-[rgba(255,255,255,0.65)] leading-6'>
-              {t('maybe_you_want_to_ask') || '您可能想问：'}
-            </span>
-            {isQuestionsCollapsed ? (
-              <DownOutlined className='text-xs text-[#525964] dark:text-[rgba(255,255,255,0.65)] transition-transform' />
-            ) : (
-              <UpOutlined className='text-xs text-[#525964] dark:text-[rgba(255,255,255,0.65)] transition-transform' />
+          <div className='flex items-center justify-between'>
+            <div
+              className='flex items-center gap-2 cursor-pointer select-none hover:opacity-80 transition-opacity'
+              onClick={() => setIsQuestionsCollapsed(!isQuestionsCollapsed)}
+            >
+              <span className='text-sm text-[#525964] dark:text-[rgba(255,255,255,0.65)] leading-6'>
+                {t('maybe_you_want_to_ask') || '您可能想问：'}
+              </span>
+              {isQuestionsCollapsed ? (
+                <DownOutlined className='text-xs text-[#525964] dark:text-[rgba(255,255,255,0.65)] transition-transform' />
+              ) : (
+                <UpOutlined className='text-xs text-[#525964] dark:text-[rgba(255,255,255,0.65)] transition-transform' />
+              )}
+            </div>
+            {!isQuestionsCollapsed && (
+              <Button
+                type='text'
+                size='small'
+                icon={<ReloadOutlined />}
+                onClick={handleRefreshQuestions}
+                className='text-xs text-[#525964] dark:text-[rgba(255,255,255,0.65)] hover:text-[#1677ff] dark:hover:text-white'
+                title='刷新问题'
+              >
+                刷新
+              </Button>
             )}
           </div>
           {!isQuestionsCollapsed && (

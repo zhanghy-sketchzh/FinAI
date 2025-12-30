@@ -1251,9 +1251,22 @@ class ChatExcel(BaseChat):
                         for col in schema_obj.get("columns", []):
                             col_name = col.get("column_name", "")
                             description = col.get("description", "")
-                            columns_summary.append(
-                                f"- {col_name}: {description}"
-                            )
+                            
+                            # 构建列信息文本
+                            col_info_text = f"- {col_name}: {description}"
+                            
+                            # 如果有unique_values_top20，补充显示前5个值
+                            if "unique_values_top20" in col:
+                                unique_vals = col["unique_values_top20"]
+                                if isinstance(unique_vals, list) and len(unique_vals) > 0:
+                                    # 取前5个值
+                                    top_5_values = unique_vals[:5]
+                                    if is_english:
+                                        col_info_text += f" (Example values: {', '.join(map(str, top_5_values))})"
+                                    else:
+                                        col_info_text += f" (示例值: {', '.join(map(str, top_5_values))})"
+                            
+                            columns_summary.append(col_info_text)
                         
                         # 根据语言切换标签
                         if is_english:
@@ -1286,8 +1299,8 @@ All Columns:
 
 **Task**:
 Based on the conversation history, current question, SQL query results, and data schema information above, please generate:
-1. A concise summary answering the user's current question
-2. 3 follow-up questions that would help users explore the data further based on the current analysis results
+1. A concise summary answering the user's current question (at least 100 words)
+2. 9 follow-up questions that would help users explore the data further based on the current analysis results
 
 **Output Format**:
 Please output a JSON object with the following structure:
@@ -1295,16 +1308,22 @@ Please output a JSON object with the following structure:
 {{
   "summary": "Your concise summary answering the user's question",
   "suggested_questions": [
-    "Question 1 (simple question with standard answer, e.g., total count, average, max, min, distinct count)",
-    "Question 2 (simple question with standard answer, e.g., distribution statistics, specific value query)",
-    "Question 3 (open-ended question, e.g., trend analysis, comparative analysis, correlation analysis)"
+    "Question 1 (simple question with standard answer)",
+    "Question 2 (simple question with standard answer)",
+    "Question 3 (simple question with standard answer)",
+    "Question 4 (simple question with standard answer)",
+    "Question 5 (simple question with standard answer)",
+    "Question 6 (simple question with standard answer)",
+    "Question 7 (open-ended question)",
+    "Question 8 (open-ended question)",
+    "Question 9 (open-ended question)"
   ]
 }}
 ```
 
 **Requirements for suggested_questions**:
-- **First 2 questions**: Simple questions with clear standard answers (e.g., total count, average, max, min, distinct count, distribution statistics)
-- **3rd question**: Open-ended question that can trigger deeper thinking and analysis (e.g., trend analysis, comparative analysis, correlation analysis)
+- **First 6 questions**: Simple questions with clear standard answers 
+- **Last 3 questions**: Medium difficulty questions that require some thinking and analysis
 - **IMPORTANT**: All questions MUST be based on actual fields and data in the data table, DO NOT fabricate non-existent fields or data
 - Questions should be based on the current analysis results and conversation context
 - All questions must be in ENGLISH
@@ -1322,8 +1341,8 @@ Please output the JSON directly, without any other text:"""  # noqa: E501
 
 **任务**：
 根据上述历史对话、当前问题、SQL查询结果和数据表信息，请生成：
-1. 一句话总结，完整回答用户的当前问题
-2. 3个基于当前分析结果的推荐问题，帮助用户进一步探索数据
+1. 一句话总结，完整回答用户的当前问题(至少100字)
+2. 9个基于当前分析结果的推荐问题，帮助用户进一步探索数据
 
 **输出格式**：
 请输出一个JSON对象，格式如下：
@@ -1331,17 +1350,23 @@ Please output the JSON directly, without any other text:"""  # noqa: E501
 {{
   "summary": "您的一句话总结，完整回答用户的问题",
   "suggested_questions": [
-    "问题1（简单问题，有标准答案，如：总数、平均值、最大值、最小值、唯一值数量等）",
-    "问题2（简单问题，有标准答案，如：分布统计、特定值查询等）",
-    "问题3（开放式问题，如：趋势分析、对比分析、关联分析等）"
+    "问题1（简单问题，有标准答案）",
+    "问题2（简单问题，有标准答案）",
+    "问题3（简单问题，有标准答案）",
+    "问题4（简单问题，有标准答案）",
+    "问题5（简单问题，有标准答案）",
+    "问题6（简单问题，有标准答案）",
+    "问题7（中等难度问题）",
+    "问题8（中等难度问题）",
+    "问题9（中等难度问题）"
   ]
 }}
 ```
 
 **推荐问题的要求**：
-- **前2个问题**：简单的问题，有明确的标准答案（如：总数、平均值、最大值、最小值、唯一值数量、分布统计等）
-- **第3个问题**：开放式问题，可以引发深入思考和分析（如：趋势分析、对比分析、关联分析等）
-- **重要**：所有问题必须基于数据表中的实际字段和数据，不能凭空捏造不存在的字段或数据
+- **前6个问题**：简单的问题，有明确的标准答案
+- **后3个问题**：中等难度问题，需要一定的思考和分析
+- **重要**：所有问题必须基于数据表中的实际字段和数据，可以围绕具体的分类值进行分析，不能凭空捏造不存在的字段或数据
 - 问题应该基于当前分析结果和对话上下文
 - 所有问题必须使用**中文**
 
@@ -1402,7 +1427,7 @@ Please output the JSON directly, without any other text:"""  # noqa: E501
                         
                         return {
                             "summary": summary_text,
-                            "suggested_questions": suggested_questions[:3] if isinstance(suggested_questions, list) else [],
+                            "suggested_questions": suggested_questions[:9] if isinstance(suggested_questions, list) else [],
                         }
                     except json.JSONDecodeError as e:
                         logger.warning(f"解析总结JSON失败: {e}，使用原始文本")

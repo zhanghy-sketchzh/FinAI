@@ -1709,12 +1709,12 @@ class ExcelAutoRegisterService:
 2. **columns**: 每个字段的业务理解信息（只需要以下字段）：
    - column_name: 字段名（必须使用完整的字段名，不能删减）
    - description: 字段的业务含义和用途描述
-3. **suggested_questions**: 生成3个推荐问题，帮助用户快速了解数据
-   - **suggested_questions_zh**: 中文版本的3个推荐问题
-   - **suggested_questions_en**: 英文版本的3个推荐问题（与中文问题对应，内容相同但语言不同）
+3. **suggested_questions**: 生成9个推荐问题，帮助用户快速了解数据
+   - **suggested_questions_zh**: 中文版本的9个推荐问题
+   - **suggested_questions_en**: 英文版本的9个推荐问题（与中文问题对应，内容相同但语言不同）
    - **问题要求**：
-     * 前2个问题：简单的问题，有明确的标准答案（如：总数、平均值、最大值、最小值、分布统计等）
-     * 第3个问题：开放式问题，可以引发深入思考和分析（如：趋势分析、对比分析、关联分析等）
+     * 前6个问题：简单的问题，有明确的标准答案
+     * 后3个问题：中等难度问题，需要一定的思考和分析
      * **重要**：所有问题必须基于数据表中的实际字段和数据，不能凭空捏造不存在的字段或数据
 
 请严格按照以下JSON格式输出：
@@ -1729,14 +1729,26 @@ class ExcelAutoRegisterService:
     }}
   ],
   "suggested_questions_zh": [
-    "问题1（简单问题，有标准答案，如：数据总共有多少条记录？某个数值字段的平均值是多少？）",
-    "问题2（简单问题，有标准答案，如：某个分类字段有多少个不同的值？某个数值字段的最大值是多少？）",
-    "问题3（开放式问题，如：按某个维度分析数据的变化趋势？不同类别之间的对比分析？）"
+    "问题1（简单问题，有标准答案）",
+    "问题2（简单问题，有标准答案）",
+    "问题3（简单问题，有标准答案）",
+    "问题4（简单问题，有标准答案）",
+    "问题5（简单问题，有标准答案）",
+    "问题6（简单问题，有标准答案）",
+    "问题7（中等难度问题）",
+    "问题8（中等难度问题）",
+    "问题9（中等难度问题）"
   ],
   "suggested_questions_en": [
-    "Question 1 (simple question with standard answer, e.g., How many records are there in total? What is the average value of a numeric field?)",
-    "Question 2 (simple question with standard answer, e.g., How many distinct values are in a categorical field? What is the maximum value of a numeric field?)",
-    "Question 3 (open-ended question, e.g., Analyze data trends by a dimension? Comparative analysis between different categories?)"
+    "Question 1 (simple question with standard answer)",
+    "Question 2 (simple question with standard answer)",
+    "Question 3 (simple question with standard answer)",
+    "Question 4 (simple question with standard answer)",
+    "Question 5 (simple question with standard answer)",
+    "Question 6 (simple question with standard answer)",
+    "Question 7 (medium difficulty question)",
+    "Question 8 (medium difficulty question)",
+    "Question 9 (medium difficulty question)"
   ]
 }}
 ```
@@ -1744,9 +1756,9 @@ class ExcelAutoRegisterService:
 注意：
 1. 深入理解字段的业务含义，不要只是简单重复字段名
 2. column_name必须与数据表中的字段名完全一致
-3. **前2个问题必须是简单的问题，有明确的标准答案**（如：总数、平均值、最大值、最小值、唯一值数量等）
-4. **第3个问题必须是开放式问题**，可以引发深入思考和分析（如：趋势分析、对比分析、关联分析等）
-5. **所有问题必须基于数据表中的实际字段和数据，不能凭空捏造不存在的字段或数据**
+3. **前6个问题必须是简单的问题，有明确的标准答案**
+4. **后3个问题必须是开放式问题**，可以引发深入思考和分析
+5. **所有问题必须基于数据表中的实际字段和数据，可以围绕具体的分类值进行分析，不能凭空捏造不存在的字段或数据**
 6. 中文推荐问题应该用自然的中文表达，英文推荐问题应该用自然的英文表达，简洁明了，可以直接用于数据分析
 7. 中英文问题应该一一对应，内容相同但语言不同
 
@@ -1853,13 +1865,13 @@ class ExcelAutoRegisterService:
             suggested_questions_zh = schema.get("suggested_questions", [])
         
         # 如果中文版本没有或数量不足，使用备用方法生成
-        if not suggested_questions_zh or len(suggested_questions_zh) < 3:
+        if not suggested_questions_zh or len(suggested_questions_zh) < 9:
             suggested_questions_zh = self._generate_fallback_questions(
                 enriched_columns, df
             )
         
         # 如果英文版本没有或数量不足，尝试从中文翻译或使用备用方法
-        if not suggested_questions_en or len(suggested_questions_en) < 3:
+        if not suggested_questions_en or len(suggested_questions_en) < 9:
             # 如果有中文版本，可以尝试翻译（这里先使用备用方法生成英文版本）
             suggested_questions_en = self._generate_fallback_questions_en(
                 enriched_columns, df
@@ -1870,8 +1882,8 @@ class ExcelAutoRegisterService:
                 "table_name": table_name,
                 "table_description": schema.get("table_description", ""),
                 "columns": enriched_columns,
-                "suggested_questions_zh": suggested_questions_zh[:3],  # 确保最多3个
-                "suggested_questions_en": suggested_questions_en[:3],  # 确保最多3个
+                "suggested_questions_zh": suggested_questions_zh[:9],  # 确保最多9个
+                "suggested_questions_en": suggested_questions_en[:9],  # 确保最多9个
             },
             ensure_ascii=False,
             indent=2,
@@ -1911,29 +1923,59 @@ class ExcelAutoRegisterService:
             if any(keyword in col_name for keyword in ["时间", "日期", "date", "time"]):
                 time_cols.append(col.get("column_name"))
 
-        # 生成基础问题：2个简单问题 + 1个开放式问题
-        # 简单问题1：总数
+        # 生成基础问题：6个简单问题 + 3个开放式问题
+        # 简单问题1-6：基于实际字段
         questions.append(f"数据总共有多少条记录？")
         
-        # 简单问题2：基于实际字段
         if numeric_cols:
             questions.append(f"{numeric_cols[0]}的平均值是多少？")
-        elif categorical_cols:
-            questions.append(f"{categorical_cols[0]}有多少个不同的值？")
+            if len(numeric_cols) > 1:
+                questions.append(f"{numeric_cols[1]}的最大值是多少？")
+            else:
+                questions.append(f"{numeric_cols[0]}的最大值是多少？")
+            if len(numeric_cols) > 2:
+                questions.append(f"{numeric_cols[2]}的最小值是多少？")
+            else:
+                questions.append(f"{numeric_cols[0]}的最小值是多少？")
         else:
             questions.append(f"数据的基本统计信息是什么？")
+            questions.append(f"数据的主要特征是什么？")
+            questions.append(f"数据的基本分布情况如何？")
         
-        # 开放式问题3：基于实际字段
+        if categorical_cols:
+            questions.append(f"{categorical_cols[0]}有多少个不同的值？")
+            if len(categorical_cols) > 1:
+                questions.append(f"{categorical_cols[1]}的分布情况如何？")
+            else:
+                questions.append(f"{categorical_cols[0]}出现次数最多的值是什么？")
+        else:
+            questions.append(f"数据的主要分类维度是什么？")
+            questions.append(f"数据的主要分组方式是什么？")
+        
+        # 开放式问题7-9：基于实际字段
         if len(numeric_cols) > 0 and len(categorical_cols) > 0:
             questions.append(f"按{categorical_cols[0]}分组，分析{numeric_cols[0]}的分布情况")
+            if len(categorical_cols) > 1:
+                questions.append(f"不同{categorical_cols[0]}之间的{numeric_cols[0]}有何差异？")
+            else:
+                questions.append(f"{categorical_cols[0]}与{numeric_cols[0]}之间的关系如何？")
         elif time_cols and len(time_cols) > 0:
             questions.append(f"按{time_cols[0]}分析数据的变化趋势")
+            questions.append(f"数据在{time_cols[0]}维度上的主要变化规律是什么？")
         elif len(categorical_cols) > 1:
             questions.append(f"不同{categorical_cols[0]}之间的{categorical_cols[1]}分布有何差异？")
+            questions.append(f"{categorical_cols[0]}与{categorical_cols[1]}之间的关联关系如何？")
         else:
             questions.append(f"数据的主要特征和规律是什么？")
+            questions.append(f"数据中哪些因素影响了主要指标的变化？")
+        
+        # 最后一个开放式问题
+        if len(numeric_cols) > 0:
+            questions.append(f"如何优化{numeric_cols[0]}这个指标？")
+        else:
+            questions.append(f"如何进一步分析这些数据？")
 
-        return questions[:3]  # 确保最多3个
+        return questions[:9]  # 确保最多9个
 
     def _generate_fallback_questions_en(
         self, columns: List[Dict], df: pd.DataFrame
@@ -1969,29 +2011,59 @@ class ExcelAutoRegisterService:
             if any(keyword in col_name for keyword in ["时间", "日期", "date", "time"]):
                 time_cols.append(col.get("column_name"))
 
-        # Generate basic questions: 2 simple questions + 1 open-ended question
-        # Simple question 1: Total count
+        # Generate basic questions: 6 simple questions + 3 open-ended questions
+        # Simple questions 1-6: Based on actual fields
         questions.append("How many records are there in total?")
         
-        # Simple question 2: Based on actual fields
         if numeric_cols:
             questions.append(f"What is the average value of {numeric_cols[0]}?")
-        elif categorical_cols:
-            questions.append(f"How many distinct values are in {categorical_cols[0]}?")
+            if len(numeric_cols) > 1:
+                questions.append(f"What is the maximum value of {numeric_cols[1]}?")
+            else:
+                questions.append(f"What is the maximum value of {numeric_cols[0]}?")
+            if len(numeric_cols) > 2:
+                questions.append(f"What is the minimum value of {numeric_cols[2]}?")
+            else:
+                questions.append(f"What is the minimum value of {numeric_cols[0]}?")
         else:
             questions.append("What are the basic statistics of the data?")
+            questions.append("What are the main characteristics of the data?")
+            questions.append("What is the basic distribution of the data?")
         
-        # Open-ended question 3: Based on actual fields
+        if categorical_cols:
+            questions.append(f"How many distinct values are in {categorical_cols[0]}?")
+            if len(categorical_cols) > 1:
+                questions.append(f"What is the distribution of {categorical_cols[1]}?")
+            else:
+                questions.append(f"What is the most frequent value in {categorical_cols[0]}?")
+        else:
+            questions.append("What are the main categorical dimensions in the data?")
+            questions.append("What are the main grouping methods in the data?")
+        
+        # Open-ended questions 7-9: Based on actual fields
         if len(numeric_cols) > 0 and len(categorical_cols) > 0:
             questions.append(f"Group by {categorical_cols[0]}, analyze the distribution of {numeric_cols[0]}")
+            if len(categorical_cols) > 1:
+                questions.append(f"What are the differences in {numeric_cols[0]} across different {categorical_cols[0]}?")
+            else:
+                questions.append(f"What is the relationship between {categorical_cols[0]} and {numeric_cols[0]}?")
         elif time_cols and len(time_cols) > 0:
             questions.append(f"Analyze the trend of data changes by {time_cols[0]}")
+            questions.append(f"What are the main patterns of data changes in the {time_cols[0]} dimension?")
         elif len(categorical_cols) > 1:
             questions.append(f"What are the differences in {categorical_cols[1]} distribution across different {categorical_cols[0]}?")
+            questions.append(f"What is the relationship between {categorical_cols[0]} and {categorical_cols[1]}?")
         else:
             questions.append("What are the main characteristics and patterns in the data?")
+            questions.append("What factors affect the changes in the main indicators?")
+        
+        # Last open-ended question
+        if len(numeric_cols) > 0:
+            questions.append(f"How to optimize the {numeric_cols[0]} indicator?")
+        else:
+            questions.append("How to further analyze this data?")
 
-        return questions[:3]  # Ensure maximum 3 questions
+        return questions[:9]  # Ensure maximum 9 questions
 
     def _call_llm_for_schema(self, prompt: str) -> str:
         """调用LLM生成Schema JSON"""
