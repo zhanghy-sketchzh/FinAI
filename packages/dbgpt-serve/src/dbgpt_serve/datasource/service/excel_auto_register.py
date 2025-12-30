@@ -1580,7 +1580,8 @@ class ExcelAutoRegisterService:
             categorical_distribution=categorical_distribution,
             sample_data=df.head(3).to_dict("records"),
         )
-
+        print("=== Schema理解Prompt ===")
+        print(prompt)
         # 调用LLM生成简化的Schema JSON（只包含业务理解字段）
         simplified_json = self._call_llm_for_schema(prompt)
 
@@ -1700,8 +1701,6 @@ class ExcelAutoRegisterService:
 === 分类列唯一值分布 ===
 {categorical_distribution}
 
-=== 数据示例（前3行） ===
-{sample_data_str}
 
 请生成一个简化的JSON格式，包含以下信息：
 
