@@ -17,7 +17,7 @@ export type SuccessTuple<T = any, D = any> = [null, T, ResponseType<T>, ApiRespo
 export type FailedTuple<T = any, D = any> = [Error | AxiosError<T, D>, null, null, null];
 
 const ins = axios.create({
-  baseURL: getApiBaseUrl(),
+  // baseURL 将在请求拦截器中动态设置
 });
 
 const LONG_TIME_API: string[] = [
@@ -40,6 +40,10 @@ const LONG_TIME_API: string[] = [
 ];
 
 ins.interceptors.request.use(request => {
+  // 动态设置 baseURL，确保使用当前页面的 origin
+  if (!request.baseURL) {
+    request.baseURL = getApiBaseUrl();
+  }
   const isLongTimeApi = LONG_TIME_API.some(item => request.url && request.url.indexOf(item) >= 0);
   if (!request.timeout) {
     request.timeout = isLongTimeApi ? 60000 : 100000;
