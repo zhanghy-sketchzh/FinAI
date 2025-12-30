@@ -8,10 +8,8 @@ const api = axios.create({
 api.defaults.timeout = 10000;
 
 api.interceptors.request.use(request => {
-  // 动态设置 baseURL，确保使用当前页面的 origin
-  if (!request.baseURL) {
-    request.baseURL = getApiBaseUrl();
-  }
+  // 动态设置 baseURL，确保每次请求都使用当前页面的 origin
+  request.baseURL = getApiBaseUrl();
   return request;
 });
 

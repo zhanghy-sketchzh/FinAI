@@ -40,10 +40,9 @@ const LONG_TIME_API: string[] = [
 ];
 
 ins.interceptors.request.use(request => {
-  // 动态设置 baseURL，确保使用当前页面的 origin
-  if (!request.baseURL) {
-    request.baseURL = getApiBaseUrl();
-  }
+  // 动态设置 baseURL，确保每次请求都使用当前页面的 origin
+  // 这样无论通过什么 IP 访问，都能正确工作
+  request.baseURL = getApiBaseUrl();
   const isLongTimeApi = LONG_TIME_API.some(item => request.url && request.url.indexOf(item) >= 0);
   if (!request.timeout) {
     request.timeout = isLongTimeApi ? 60000 : 100000;

@@ -9,16 +9,15 @@ export const STORAGE_INIT_MESSAGE_KET = '__db_gpt_im_key';
 /** Flow nodes */
 export const FLOW_NODES_KEY = '__db_gpt_static_flow_nodes_key';
 
-// 动态获取 API base URL：优先使用环境变量，否则使用当前页面的 origin
+// 动态获取 API base URL：在浏览器环境中始终使用当前页面的 origin
+// 这样可以支持通过不同的 IP 地址访问（localhost、内网 IP、公网 IP 等）
 export function getApiBaseUrl(): string {
-  if (process.env.API_BASE_URL) {
-    return process.env.API_BASE_URL;
-  }
-  // 在浏览器环境中，使用当前页面的 origin
-  if (typeof window !== 'undefined') {
+  // 在浏览器环境中，优先使用当前页面的 origin
+  if (typeof window !== 'undefined' && window.location) {
     return window.location.origin;
   }
-  return '';
+  // 如果不在浏览器环境（SSR），则使用环境变量或默认值
+  return process.env.API_BASE_URL || '';
 }
 
 export function formatSql(sql: string, lang?: string) {

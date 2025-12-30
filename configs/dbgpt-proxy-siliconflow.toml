@@ -13,8 +13,8 @@ port = 5670
 type = "sqlite"
 path = "pilot/meta_data/dbgpt.db"
 [service.model.worker]
-host = "127.0.0.1"
-worker_register_host = "127.0.0.1"
+host = "21.91.39.159"
+worker_register_host = "21.91.39.159"
 
 [rag.storage]
 [rag.storage.vector]
