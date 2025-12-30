@@ -12,6 +12,7 @@ import {
 import { GPTVis } from '@antv/gpt-vis';
 import { message } from 'antd';
 import classNames from 'classnames';
+import copy from 'copy-to-clipboard';
 import Image from 'next/image';
 import { useSearchParams } from 'next/navigation';
 import React, { memo, useMemo } from 'react';
@@ -209,15 +210,17 @@ const ChatContent: React.FC<{
                   className='flex items-center justify-center w-6 h-6 text-[#525964] dark:text-[rgba(255,255,255,0.6)] hover:text-[#1677ff] dark:hover:text-white transition-colors'
                   onClick={() => {
                     if (typeof context === 'string') {
-                      navigator.clipboard
-                        .writeText(context)
-                        .then(() => {
+                      const pureStr = context.replace(/\trelations:.*/g, '');
+                      const result = copy(pureStr);
+                      if (result) {
+                        if (pureStr) {
                           message.success(t('copy_to_clipboard_success'));
-                        })
-                        .catch(err => {
-                          console.error(t('copy_to_clipboard_failed'), err);
-                          message.error(t('copy_to_clipboard_failed'));
-                        });
+                        } else {
+                          message.warning(t('copy_nothing') || '没有内容可复制');
+                        }
+                      } else {
+                        message.error(t('copy_to_clipboard_failed'));
+                      }
                     }
                   }}
                   title={t('copy_to_clipboard')}

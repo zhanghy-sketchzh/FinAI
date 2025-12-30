@@ -113,7 +113,7 @@ const ChatInputPanel: React.ForwardRefRenderFunction<any, { ctrl: AbortControlle
           const questionsData = JSON.parse(jsonStr);
           const questions = questionsData.suggested_questions || [];
           if (Array.isArray(questions) && questions.length > 0) {
-            setDynamicSuggestedQuestions(questions.slice(0, 4));
+            setDynamicSuggestedQuestions(questions.slice(0, 3));
             lastProcessedMessageRef.current = messageHash;
             return;
           }
@@ -125,7 +125,7 @@ const ChatInputPanel: React.ForwardRefRenderFunction<any, { ctrl: AbortControlle
               const questionsData = JSON.parse(suggestedQuestionsMatch[1]);
               const questions = questionsData.suggested_questions || [];
               if (Array.isArray(questions) && questions.length > 0) {
-                setDynamicSuggestedQuestions(questions.slice(0, 4));
+                setDynamicSuggestedQuestions(questions.slice(0, 3));
                 lastProcessedMessageRef.current = messageHash;
                 return;
               }
@@ -203,7 +203,7 @@ const ChatInputPanel: React.ForwardRefRenderFunction<any, { ctrl: AbortControlle
         questions = schema.suggested_questions || [];
       }
       
-      return Array.isArray(questions) ? questions.slice(0, 4) : [];
+      return Array.isArray(questions) ? questions.slice(0, 3) : [];
     } catch (error) {
       return [];
     }

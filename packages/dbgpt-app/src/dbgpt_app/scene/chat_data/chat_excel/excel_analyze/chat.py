@@ -640,7 +640,6 @@ class ChatExcel(BaseChat):
             col_name = col.get("column_name", "")
             data_type = col.get("data_type", "")
             description = col.get("description", "")
-            semantic_type = col.get("semantic_type", "")
             analysis_usage = col.get("analysis_usage", [])
             domain_knowledge = col.get("domain_knowledge", "")
 
@@ -648,9 +647,6 @@ class ChatExcel(BaseChat):
             if data_type:
                 label = "Data type" if is_english else "数据类型"
                 col_text += f"\n    {label}: {data_type}"
-            if semantic_type:
-                label = "Semantic type" if is_english else "语义类型"
-                col_text += f"\n    {label}: {semantic_type}"
             if description:
                 label = "Description" if is_english else "描述"
                 col_text += f"\n    {label}: {description}"
@@ -667,16 +663,16 @@ class ChatExcel(BaseChat):
                 label = "Statistics" if is_english else "统计信息"
                 col_text += f"\n    {label}: {col['statistics_summary']}"
 
-            if "unique_values_top5" in col:
-                unique_vals = col["unique_values_top5"]
+            if "unique_values_top20" in col:
+                unique_vals = col["unique_values_top20"]
                 label = "Possible values" if is_english else "可选值"
                 label_partial = (
                     "Possible values (partial)" if is_english else "可选值(部分)"
                 )
-                if len(unique_vals) <= 10:
+                if len(unique_vals) <= 20:
                     col_text += f"\n    {label}: {', '.join(map(str, unique_vals))}"
                 else:
-                    partial_vals = ", ".join(map(str, unique_vals[:10]))
+                    partial_vals = ", ".join(map(str, unique_vals[:20]))
                     col_text += f"\n    {label_partial}: {partial_vals}..."
 
             formatted_parts.append(col_text)
@@ -1254,10 +1250,9 @@ class ChatExcel(BaseChat):
                         # 包含所有列，不限制数量
                         for col in schema_obj.get("columns", []):
                             col_name = col.get("column_name", "")
-                            semantic_type = col.get("semantic_type", "")
                             description = col.get("description", "")
                             columns_summary.append(
-                                f"- {col_name} ({semantic_type}): {description}"
+                                f"- {col_name}: {description}"
                             )
                         
                         # 根据语言切换标签
@@ -1291,28 +1286,27 @@ All Columns:
 
 **Task**:
 Based on the conversation history, current question, SQL query results, and data schema information above, please generate:
-1. A concise summary answering the user's current question (at least 100 words)
-2. 4 follow-up questions that would help users explore the data further based on the current analysis results
+1. A concise summary answering the user's current question
+2. 3 follow-up questions that would help users explore the data further based on the current analysis results
 
 **Output Format**:
 Please output a JSON object with the following structure:
 ```json
 {{
-  "summary": "Your concise summary answering the user's question(at least 100 words)",
+  "summary": "Your concise summary answering the user's question",
   "suggested_questions": [
-    "Question 1 (based on current analysis, e.g., deeper analysis, comparison, trend)",
-    "Question 2",
-    "Question 3",
-    "Question 4"
+    "Question 1 (simple question with standard answer, e.g., total count, average, max, min, distinct count)",
+    "Question 2 (simple question with standard answer, e.g., distribution statistics, specific value query)",
+    "Question 3 (open-ended question, e.g., trend analysis, comparative analysis, correlation analysis)"
   ]
 }}
 ```
 
 **Requirements for suggested_questions**:
+- **First 2 questions**: Simple questions with clear standard answers (e.g., total count, average, max, min, distinct count, distribution statistics)
+- **3rd question**: Open-ended question that can trigger deeper thinking and analysis (e.g., trend analysis, comparative analysis, correlation analysis)
+- **IMPORTANT**: All questions MUST be based on actual fields and data in the data table, DO NOT fabricate non-existent fields or data
 - Questions should be based on the current analysis results and conversation context
-- Questions should help users explore deeper insights or related aspects
-- Questions should be moderate difficulty (not too simple, not too complex)
-- Questions should be diverse in type (statistical, comparative, trend analysis, filtering, etc.)
 - All questions must be in ENGLISH
 
 Please output the JSON directly, without any other text:"""  # noqa: E501
@@ -1328,28 +1322,27 @@ Please output the JSON directly, without any other text:"""  # noqa: E501
 
 **任务**：
 根据上述历史对话、当前问题、SQL查询结果和数据表信息，请生成：
-1. 一句话总结，完整回答用户的当前问题(至少100字)
-2. 4个基于当前分析结果的深入问题，帮助用户进一步探索数据
+1. 一句话总结，完整回答用户的当前问题
+2. 3个基于当前分析结果的推荐问题，帮助用户进一步探索数据
 
 **输出格式**：
 请输出一个JSON对象，格式如下：
 ```json
 {{
-  "summary": "您的一句话总结，完整回答用户的问题(至少100字)",
+  "summary": "您的一句话总结，完整回答用户的问题",
   "suggested_questions": [
-    "问题1（基于当前分析结果，如：深入分析、对比、趋势等）",
-    "问题2",
-    "问题3",
-    "问题4"
+    "问题1（简单问题，有标准答案，如：总数、平均值、最大值、最小值、唯一值数量等）",
+    "问题2（简单问题，有标准答案，如：分布统计、特定值查询等）",
+    "问题3（开放式问题，如：趋势分析、对比分析、关联分析等）"
   ]
 }}
 ```
 
 **推荐问题的要求**：
+- **前2个问题**：简单的问题，有明确的标准答案（如：总数、平均值、最大值、最小值、唯一值数量、分布统计等）
+- **第3个问题**：开放式问题，可以引发深入思考和分析（如：趋势分析、对比分析、关联分析等）
+- **重要**：所有问题必须基于数据表中的实际字段和数据，不能凭空捏造不存在的字段或数据
 - 问题应该基于当前分析结果和对话上下文
-- 问题应该帮助用户探索更深入的洞察或相关方面
-- 问题难度适中（不要过于简单，也不要过于复杂）
-- 问题类型应该多样化（统计类、对比类、趋势分析类、筛选类等）
 - 所有问题必须使用**中文**
 
 请直接输出JSON，不要有其他文字："""
@@ -1409,7 +1402,7 @@ Please output the JSON directly, without any other text:"""  # noqa: E501
                         
                         return {
                             "summary": summary_text,
-                            "suggested_questions": suggested_questions[:4] if isinstance(suggested_questions, list) else [],
+                            "suggested_questions": suggested_questions[:3] if isinstance(suggested_questions, list) else [],
                         }
                     except json.JSONDecodeError as e:
                         logger.warning(f"解析总结JSON失败: {e}，使用原始文本")

@@ -1708,11 +1708,14 @@ class ExcelAutoRegisterService:
 1. **table_description**: 表的整体描述，说明这是什么数据，适合做什么分析
 2. **columns**: 每个字段的业务理解信息（只需要以下字段）：
    - column_name: 字段名（必须使用完整的字段名，不能删减）
-   - semantic_type: 语义类型（如：时间维度、地域维度、数值指标、分类维度、标识字段等）
    - description: 字段的业务含义和用途描述
-3. **suggested_questions**: 生成4个难度适中的推荐问题，帮助用户快速了解数据
-   - **suggested_questions_zh**: 中文版本的4个推荐问题
-   - **suggested_questions_en**: 英文版本的4个推荐问题（与中文问题对应，内容相同但语言不同）
+3. **suggested_questions**: 生成3个推荐问题，帮助用户快速了解数据
+   - **suggested_questions_zh**: 中文版本的3个推荐问题
+   - **suggested_questions_en**: 英文版本的3个推荐问题（与中文问题对应，内容相同但语言不同）
+   - **问题要求**：
+     * 前2个问题：简单的问题，有明确的标准答案（如：总数、平均值、最大值、最小值、分布统计等）
+     * 第3个问题：开放式问题，可以引发深入思考和分析（如：趋势分析、对比分析、关联分析等）
+     * **重要**：所有问题必须基于数据表中的实际字段和数据，不能凭空捏造不存在的字段或数据
 
 请严格按照以下JSON格式输出：
 
@@ -1722,32 +1725,30 @@ class ExcelAutoRegisterService:
   "columns": [
     {{
       "column_name": "完整的字段名",
-      "semantic_type": "时间维度/地域维度/数值指标/分类维度/标识字段",
       "description": "详细的业务含义描述"
     }}
   ],
   "suggested_questions_zh": [
-    "问题1（统计汇总类，如：总数、平均值等）",
-    "问题2（分组分析类，如：按某个维度分组统计）",
-    "问题3（趋势分析类，如有时间字段）",
-    "问题4（对比分析类，如：不同类别的对比）"
+    "问题1（简单问题，有标准答案，如：数据总共有多少条记录？某个数值字段的平均值是多少？）",
+    "问题2（简单问题，有标准答案，如：某个分类字段有多少个不同的值？某个数值字段的最大值是多少？）",
+    "问题3（开放式问题，如：按某个维度分析数据的变化趋势？不同类别之间的对比分析？）"
   ],
   "suggested_questions_en": [
-    "Question 1 (statistical summary, e.g., total, average, etc.)",
-    "Question 2 (grouping analysis, e.g., statistics grouped by a dimension)",
-    "Question 3 (trend analysis, if there is a time field)",
-    "Question 4 (comparative analysis, e.g., comparison of different categories)"
+    "Question 1 (simple question with standard answer, e.g., How many records are there in total? What is the average value of a numeric field?)",
+    "Question 2 (simple question with standard answer, e.g., How many distinct values are in a categorical field? What is the maximum value of a numeric field?)",
+    "Question 3 (open-ended question, e.g., Analyze data trends by a dimension? Comparative analysis between different categories?)"
   ]
 }}
 ```
 
 注意：
 1. 深入理解字段的业务含义，不要只是简单重复字段名
-2. semantic_type要准确，这对后续分析非常重要
-3. column_name必须与数据表中的字段名完全一致
-4. suggested_questions_zh 和 suggested_questions_en 应该基于数据集的实际特点，难度适中（不要过于简单，也不要过于复杂），问题类型应该多样化
-5. 中文推荐问题应该用自然的中文表达，英文推荐问题应该用自然的英文表达，简洁明了，可以直接用于数据分析
-6. 中英文问题应该一一对应，内容相同但语言不同
+2. column_name必须与数据表中的字段名完全一致
+3. **前2个问题必须是简单的问题，有明确的标准答案**（如：总数、平均值、最大值、最小值、唯一值数量等）
+4. **第3个问题必须是开放式问题**，可以引发深入思考和分析（如：趋势分析、对比分析、关联分析等）
+5. **所有问题必须基于数据表中的实际字段和数据，不能凭空捏造不存在的字段或数据**
+6. 中文推荐问题应该用自然的中文表达，英文推荐问题应该用自然的英文表达，简洁明了，可以直接用于数据分析
+7. 中英文问题应该一一对应，内容相同但语言不同
 
 请直接输出JSON，不要有其他文字：
 """
@@ -1797,26 +1798,16 @@ class ExcelAutoRegisterService:
             col_info = {
                 "column_name": col_name,
                 "data_type": dtype,
-                "semantic_type": llm_info.get("semantic_type", "未知"),
                 "description": llm_info.get("description", f"{col_name}字段"),
                 "is_key_field": self._is_potential_key_field(col_name, col_data),
             }
 
-            # 判断字段类型（优先根据语义类型判断，避免数据类型误判）
-            semantic_type = col_info["semantic_type"]
-            is_numeric_by_dtype = dtype in ["int64", "float64", "int32", "float32"]
-            is_numeric_by_semantic = "指标" in semantic_type or "数值" in semantic_type
+            # 判断字段类型（根据数据类型判断）
+            is_numeric_by_dtype = dtype in ["int64", "float64", "int32", "float32", "Int64"]
 
-            # 数值字段：优先根据语义类型判断，如果语义类型是数值指标，即使data_type是object也按数值处理
-            if is_numeric_by_dtype or is_numeric_by_semantic:
-                # 尝试转换为数值类型
-                if dtype in ["object", "category"]:
-                    try:
-                        numeric_data = pd.to_numeric(col_data, errors="coerce").dropna()
-                    except Exception:
-                        numeric_data = col_data.dropna()
-                else:
-                    numeric_data = col_data.dropna()
+            # 数值字段：根据数据类型判断
+            if is_numeric_by_dtype:
+                numeric_data = col_data.dropna()
 
                 if len(numeric_data) > 0:
                     try:
@@ -1832,30 +1823,23 @@ class ExcelAutoRegisterService:
                         # 如果转换失败，不添加统计信息
                         pass
 
-            # 分类字段：只列出出现次数最高的5个值，并合并统计信息
-            # 排除数值指标字段（即使data_type是object）
-            elif (
-                dtype in ["object", "category"]
-                and "时间" not in semantic_type
-                and "日期" not in semantic_type
-                and "指标" not in semantic_type
-                and "数值" not in semantic_type
-            ):
+            # 分类字段：列出出现次数最高的20个值
+            elif dtype in ["object", "category"]:
                 value_counts = col_data.value_counts()
                 total_unique = len(col_data.dropna().unique())
 
-                # 只取出现次数最高的5个值
-                top_5_values = value_counts.head(5)
-                col_info["unique_values_top5"] = [
-                    str(v) for v in top_5_values.index.tolist()
+                # 只取出现次数最高的20个值
+                top_20_values = value_counts.head(20)
+                col_info["unique_values_top20"] = [
+                    str(v) for v in top_20_values.index.tolist()
                 ]
 
                 # 合并统计信息到 value_distribution（包含出现次数）
-                top_5_list = [
-                    f"{str(v)}({count}次)" for v, count in top_5_values.items()
+                top_20_list = [
+                    f"{str(v)}({count}次)" for v, count in top_20_values.items()
                 ]
                 col_info["value_distribution"] = (
-                    f"共{total_unique}个唯一值，出现次数前5: {', '.join(top_5_list)}"
+                    f"共{total_unique}个唯一值，出现次数前20: {', '.join(top_20_list)}"
                 )
 
             enriched_columns.append(col_info)
@@ -1869,13 +1853,13 @@ class ExcelAutoRegisterService:
             suggested_questions_zh = schema.get("suggested_questions", [])
         
         # 如果中文版本没有或数量不足，使用备用方法生成
-        if not suggested_questions_zh or len(suggested_questions_zh) < 4:
+        if not suggested_questions_zh or len(suggested_questions_zh) < 3:
             suggested_questions_zh = self._generate_fallback_questions(
                 enriched_columns, df
             )
         
         # 如果英文版本没有或数量不足，尝试从中文翻译或使用备用方法
-        if not suggested_questions_en or len(suggested_questions_en) < 4:
+        if not suggested_questions_en or len(suggested_questions_en) < 3:
             # 如果有中文版本，可以尝试翻译（这里先使用备用方法生成英文版本）
             suggested_questions_en = self._generate_fallback_questions_en(
                 enriched_columns, df
@@ -1886,8 +1870,8 @@ class ExcelAutoRegisterService:
                 "table_name": table_name,
                 "table_description": schema.get("table_description", ""),
                 "columns": enriched_columns,
-                "suggested_questions_zh": suggested_questions_zh[:4],  # 确保最多4个
-                "suggested_questions_en": suggested_questions_en[:4],  # 确保最多4个
+                "suggested_questions_zh": suggested_questions_zh[:3],  # 确保最多3个
+                "suggested_questions_en": suggested_questions_en[:3],  # 确保最多3个
             },
             ensure_ascii=False,
             indent=2,
@@ -1909,39 +1893,47 @@ class ExcelAutoRegisterService:
         questions = []
         row_count = len(df)
 
-        # 找出数值指标字段和分类维度字段
+        # 找出数值字段和分类字段（根据data_type判断）
         numeric_cols = [
             col.get("column_name")
             for col in columns
-            if "指标" in col.get("semantic_type", "") or "数值" in col.get("semantic_type", "")
+            if col.get("data_type") in ["int64", "float64", "int32", "float32", "Int64"]
         ]
         categorical_cols = [
             col.get("column_name")
             for col in columns
-            if "维度" in col.get("semantic_type", "") or "分类" in col.get("semantic_type", "")
+            if col.get("data_type") in ["object", "category"]
         ]
-        time_cols = [
-            col.get("column_name")
-            for col in columns
-            if "时间" in col.get("semantic_type", "") or "日期" in col.get("semantic_type", "")
-        ]
+        # 时间字段：根据列名和数据类型判断
+        time_cols = []
+        for col in columns:
+            col_name = col.get("column_name", "").lower()
+            if any(keyword in col_name for keyword in ["时间", "日期", "date", "time"]):
+                time_cols.append(col.get("column_name"))
 
-        # 生成基础问题
+        # 生成基础问题：2个简单问题 + 1个开放式问题
+        # 简单问题1：总数
+        questions.append(f"数据总共有多少条记录？")
+        
+        # 简单问题2：基于实际字段
         if numeric_cols:
-            questions.append(f"数据总共有多少条记录？")
-            if len(numeric_cols) > 0:
-                questions.append(f"{numeric_cols[0]}的平均值是多少？")
-            if len(numeric_cols) > 0 and len(categorical_cols) > 0:
-                questions.append(f"按{categorical_cols[0]}分组，统计{numeric_cols[0]}的总和")
-
-        if categorical_cols:
-            if len(categorical_cols) > 0:
-                questions.append(f"{categorical_cols[0]}的分布情况如何？")
-
-        if time_cols and len(time_cols) > 0:
+            questions.append(f"{numeric_cols[0]}的平均值是多少？")
+        elif categorical_cols:
+            questions.append(f"{categorical_cols[0]}有多少个不同的值？")
+        else:
+            questions.append(f"数据的基本统计信息是什么？")
+        
+        # 开放式问题3：基于实际字段
+        if len(numeric_cols) > 0 and len(categorical_cols) > 0:
+            questions.append(f"按{categorical_cols[0]}分组，分析{numeric_cols[0]}的分布情况")
+        elif time_cols and len(time_cols) > 0:
             questions.append(f"按{time_cols[0]}分析数据的变化趋势")
+        elif len(categorical_cols) > 1:
+            questions.append(f"不同{categorical_cols[0]}之间的{categorical_cols[1]}分布有何差异？")
+        else:
+            questions.append(f"数据的主要特征和规律是什么？")
 
-        return questions[:4]  # 确保最多4个
+        return questions[:3]  # 确保最多3个
 
     def _generate_fallback_questions_en(
         self, columns: List[Dict], df: pd.DataFrame
@@ -1959,39 +1951,47 @@ class ExcelAutoRegisterService:
         questions = []
         row_count = len(df)
 
-        # Find numeric indicator fields and categorical dimension fields
+        # Find numeric fields and categorical fields (based on data_type)
         numeric_cols = [
             col.get("column_name")
             for col in columns
-            if "指标" in col.get("semantic_type", "") or "数值" in col.get("semantic_type", "")
+            if col.get("data_type") in ["int64", "float64", "int32", "float32", "Int64"]
         ]
         categorical_cols = [
             col.get("column_name")
             for col in columns
-            if "维度" in col.get("semantic_type", "") or "分类" in col.get("semantic_type", "")
+            if col.get("data_type") in ["object", "category"]
         ]
-        time_cols = [
-            col.get("column_name")
-            for col in columns
-            if "时间" in col.get("semantic_type", "") or "日期" in col.get("semantic_type", "")
-        ]
+        # Time fields: based on column name and data type
+        time_cols = []
+        for col in columns:
+            col_name = col.get("column_name", "").lower()
+            if any(keyword in col_name for keyword in ["时间", "日期", "date", "time"]):
+                time_cols.append(col.get("column_name"))
 
-        # Generate basic questions
+        # Generate basic questions: 2 simple questions + 1 open-ended question
+        # Simple question 1: Total count
+        questions.append("How many records are there in total?")
+        
+        # Simple question 2: Based on actual fields
         if numeric_cols:
-            questions.append("How many records are there in total?")
-            if len(numeric_cols) > 0:
-                questions.append(f"What is the average value of {numeric_cols[0]}?")
-            if len(numeric_cols) > 0 and len(categorical_cols) > 0:
-                questions.append(f"Group by {categorical_cols[0]}, what is the sum of {numeric_cols[0]}?")
-
-        if categorical_cols:
-            if len(categorical_cols) > 0:
-                questions.append(f"What is the distribution of {categorical_cols[0]}?")
-
-        if time_cols and len(time_cols) > 0:
+            questions.append(f"What is the average value of {numeric_cols[0]}?")
+        elif categorical_cols:
+            questions.append(f"How many distinct values are in {categorical_cols[0]}?")
+        else:
+            questions.append("What are the basic statistics of the data?")
+        
+        # Open-ended question 3: Based on actual fields
+        if len(numeric_cols) > 0 and len(categorical_cols) > 0:
+            questions.append(f"Group by {categorical_cols[0]}, analyze the distribution of {numeric_cols[0]}")
+        elif time_cols and len(time_cols) > 0:
             questions.append(f"Analyze the trend of data changes by {time_cols[0]}")
+        elif len(categorical_cols) > 1:
+            questions.append(f"What are the differences in {categorical_cols[1]} distribution across different {categorical_cols[0]}?")
+        else:
+            questions.append("What are the main characteristics and patterns in the data?")
 
-        return questions[:4]  # Ensure maximum 4 questions
+        return questions[:3]  # Ensure maximum 3 questions
 
     def _call_llm_for_schema(self, prompt: str) -> str:
         """调用LLM生成Schema JSON"""
@@ -2133,17 +2133,19 @@ class ExcelAutoRegisterService:
         for col in schema.get("columns", []):
             lines.append(f"\n字段: {col.get('column_name')}")
             lines.append(f"  类型: {col.get('data_type')}")
-            lines.append(f"  语义: {col.get('semantic_type')}")
             lines.append(f"  描述: {col.get('description')}")
 
-            if "unique_values_top5" in col:
-                unique_vals = col["unique_values_top5"]
+            if "unique_values_top20" in col:
+                unique_vals = col["unique_values_top20"]
                 lines.append(
-                    f"  出现次数前5的值: {', '.join([str(v) for v in unique_vals])}"
+                    f"  出现次数前20的值: {', '.join([str(v) for v in unique_vals])}"
                 )
 
             if "statistics_summary" in col:
                 lines.append(f"  统计: {col['statistics_summary']}")
+            
+            if "value_distribution" in col:
+                lines.append(f"  值分布: {col['value_distribution']}")
 
         return "\n".join(lines)
 
