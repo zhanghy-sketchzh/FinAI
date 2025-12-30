@@ -1292,7 +1292,7 @@ All Columns:
 **Task**:
 Based on the conversation history, current question, SQL query results, and data schema information above, please generate:
 1. A concise summary answering the user's current question (at least 100 words)
-2. 5 follow-up questions that would help users explore the data further based on the current analysis results
+2. 4 follow-up questions that would help users explore the data further based on the current analysis results
 
 **Output Format**:
 Please output a JSON object with the following structure:
@@ -1303,8 +1303,7 @@ Please output a JSON object with the following structure:
     "Question 1 (based on current analysis, e.g., deeper analysis, comparison, trend)",
     "Question 2",
     "Question 3",
-    "Question 4",
-    "Question 5"
+    "Question 4"
   ]
 }}
 ```
@@ -1330,7 +1329,7 @@ Please output the JSON directly, without any other text:"""  # noqa: E501
 **任务**：
 根据上述历史对话、当前问题、SQL查询结果和数据表信息，请生成：
 1. 一句话总结，完整回答用户的当前问题(至少100字)
-2. 5个基于当前分析结果的深入问题，帮助用户进一步探索数据
+2. 4个基于当前分析结果的深入问题，帮助用户进一步探索数据
 
 **输出格式**：
 请输出一个JSON对象，格式如下：
@@ -1341,8 +1340,7 @@ Please output the JSON directly, without any other text:"""  # noqa: E501
     "问题1（基于当前分析结果，如：深入分析、对比、趋势等）",
     "问题2",
     "问题3",
-    "问题4",
-    "问题5"
+    "问题4"
   ]
 }}
 ```
@@ -1411,7 +1409,7 @@ Please output the JSON directly, without any other text:"""  # noqa: E501
                         
                         return {
                             "summary": summary_text,
-                            "suggested_questions": suggested_questions[:5] if isinstance(suggested_questions, list) else [],
+                            "suggested_questions": suggested_questions[:4] if isinstance(suggested_questions, list) else [],
                         }
                     except json.JSONDecodeError as e:
                         logger.warning(f"解析总结JSON失败: {e}，使用原始文本")

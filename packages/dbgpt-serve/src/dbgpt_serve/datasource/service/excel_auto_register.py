@@ -1710,9 +1710,9 @@ class ExcelAutoRegisterService:
    - column_name: 字段名（必须使用完整的字段名，不能删减）
    - semantic_type: 语义类型（如：时间维度、地域维度、数值指标、分类维度、标识字段等）
    - description: 字段的业务含义和用途描述
-3. **suggested_questions**: 生成5个难度适中的推荐问题，帮助用户快速了解数据
-   - **suggested_questions_zh**: 中文版本的5个推荐问题
-   - **suggested_questions_en**: 英文版本的5个推荐问题（与中文问题对应，内容相同但语言不同）
+3. **suggested_questions**: 生成4个难度适中的推荐问题，帮助用户快速了解数据
+   - **suggested_questions_zh**: 中文版本的4个推荐问题
+   - **suggested_questions_en**: 英文版本的4个推荐问题（与中文问题对应，内容相同但语言不同）
 
 请严格按照以下JSON格式输出：
 
@@ -1730,15 +1730,13 @@ class ExcelAutoRegisterService:
     "问题1（统计汇总类，如：总数、平均值等）",
     "问题2（分组分析类，如：按某个维度分组统计）",
     "问题3（趋势分析类，如有时间字段）",
-    "问题4（对比分析类，如：不同类别的对比）",
-    "问题5（筛选查询类，如：满足某个条件的数据）"
+    "问题4（对比分析类，如：不同类别的对比）"
   ],
   "suggested_questions_en": [
     "Question 1 (statistical summary, e.g., total, average, etc.)",
     "Question 2 (grouping analysis, e.g., statistics grouped by a dimension)",
     "Question 3 (trend analysis, if there is a time field)",
-    "Question 4 (comparative analysis, e.g., comparison of different categories)",
-    "Question 5 (filtering query, e.g., data meeting certain conditions)"
+    "Question 4 (comparative analysis, e.g., comparison of different categories)"
   ]
 }}
 ```
@@ -1871,13 +1869,13 @@ class ExcelAutoRegisterService:
             suggested_questions_zh = schema.get("suggested_questions", [])
         
         # 如果中文版本没有或数量不足，使用备用方法生成
-        if not suggested_questions_zh or len(suggested_questions_zh) < 5:
+        if not suggested_questions_zh or len(suggested_questions_zh) < 4:
             suggested_questions_zh = self._generate_fallback_questions(
                 enriched_columns, df
             )
         
         # 如果英文版本没有或数量不足，尝试从中文翻译或使用备用方法
-        if not suggested_questions_en or len(suggested_questions_en) < 5:
+        if not suggested_questions_en or len(suggested_questions_en) < 4:
             # 如果有中文版本，可以尝试翻译（这里先使用备用方法生成英文版本）
             suggested_questions_en = self._generate_fallback_questions_en(
                 enriched_columns, df
@@ -1888,8 +1886,8 @@ class ExcelAutoRegisterService:
                 "table_name": table_name,
                 "table_description": schema.get("table_description", ""),
                 "columns": enriched_columns,
-                "suggested_questions_zh": suggested_questions_zh[:5],  # 确保最多5个
-                "suggested_questions_en": suggested_questions_en[:5],  # 确保最多5个
+                "suggested_questions_zh": suggested_questions_zh[:4],  # 确保最多4个
+                "suggested_questions_en": suggested_questions_en[:4],  # 确保最多4个
             },
             ensure_ascii=False,
             indent=2,
@@ -1943,7 +1941,7 @@ class ExcelAutoRegisterService:
         if time_cols and len(time_cols) > 0:
             questions.append(f"按{time_cols[0]}分析数据的变化趋势")
 
-        return questions[:5]  # 确保最多5个
+        return questions[:4]  # 确保最多4个
 
     def _generate_fallback_questions_en(
         self, columns: List[Dict], df: pd.DataFrame
@@ -1993,18 +1991,7 @@ class ExcelAutoRegisterService:
         if time_cols and len(time_cols) > 0:
             questions.append(f"Analyze the trend of data changes by {time_cols[0]}")
 
-        return questions[:5]  # Ensure maximum 5 questions
-
-        # 如果问题不足5个，补充通用问题
-        while len(questions) < 5:
-            if len(questions) == 0:
-                questions.append("数据的基本统计信息是什么？")
-            elif len(questions) == 1:
-                questions.append("数据的主要特征有哪些？")
-            else:
-                break
-
-        return questions[:5]
+        return questions[:4]  # Ensure maximum 4 questions
 
     def _call_llm_for_schema(self, prompt: str) -> str:
         """调用LLM生成Schema JSON"""
