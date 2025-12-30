@@ -50,14 +50,16 @@ const nextConfig = {
     if (process.env.STATIC_EXPORT === 'true') {
       return [];
     }
+    // 使用环境变量或默认值，支持通过不同 IP 访问
+    const apiBaseUrl = process.env.API_BASE_URL || 'http://localhost:5670';
     return [
       {
         source: '/api/:path*',
-        destination: 'http://localhost:5670/api/:path*',
+        destination: `${apiBaseUrl}/api/:path*`,
       },
       {
         source: '/images/:path*',
-        destination: 'http://localhost:5670/images/:path*',
+        destination: `${apiBaseUrl}/images/:path*`,
       },
     ];
   },

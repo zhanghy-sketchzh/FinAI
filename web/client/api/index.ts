@@ -1,4 +1,5 @@
 import { getUserId } from '@/utils';
+import { getApiBaseUrl } from '@/utils';
 import { HEADER_USER_ID_KEY } from '@/utils/constants/index';
 import axios, { AxiosError, AxiosRequestConfig, AxiosResponse } from 'axios';
 
@@ -16,7 +17,7 @@ export type SuccessTuple<T = any, D = any> = [null, T, ResponseType<T>, ApiRespo
 export type FailedTuple<T = any, D = any> = [Error | AxiosError<T, D>, null, null, null];
 
 const ins = axios.create({
-  baseURL: process.env.API_BASE_URL ?? '',
+  baseURL: getApiBaseUrl(),
 });
 
 const LONG_TIME_API: string[] = [

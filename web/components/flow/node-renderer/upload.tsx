@@ -77,7 +77,12 @@ export const renderUpload = (params: Props) => {
 
   const props: UploadProps = {
     name: 'files',
-    action: process.env.API_BASE_URL ?? '' + data.ui.action,
+    action: (() => {
+      if (typeof window !== 'undefined') {
+        return window.location.origin + data.ui.action;
+      }
+      return (process.env.API_BASE_URL || '') + data.ui.action;
+    })(),
     headers: {
       authorization: 'authorization-text',
     },

@@ -1,6 +1,6 @@
 import { ChatContext } from '@/app/chat-context';
 import i18n from '@/app/i18n';
-import { getUserId } from '@/utils';
+import { getUserId, getApiBaseUrl } from '@/utils';
 import { HEADER_USER_ID_KEY } from '@/utils/constants/index';
 import { EventStreamContentType, fetchEventSource } from '@microsoft/fetch-event-source';
 import { message } from 'antd';
@@ -47,7 +47,7 @@ const useChat = ({ queryAgentURL = '/api/v1/chat/completions', app_code }: Props
       }
 
       try {
-        await fetchEventSource(`${process.env.API_BASE_URL ?? ''}${queryAgentURL}`, {
+        await fetchEventSource(`${getApiBaseUrl()}${queryAgentURL}`, {
           method: 'POST',
           headers: {
             'Content-Type': 'application/json',

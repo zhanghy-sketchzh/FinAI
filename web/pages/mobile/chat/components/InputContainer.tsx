@@ -1,6 +1,6 @@
 import { apiInterceptors, clearChatHistory } from '@/client/api';
 import { ChatHistoryResponse } from '@/types/chat';
-import { getUserId } from '@/utils';
+import { getApiBaseUrl, getUserId } from '@/utils';
 import { HEADER_USER_ID_KEY } from '@/utils/constants/index';
 import { ClearOutlined, LoadingOutlined, PauseCircleOutlined, RedoOutlined, SendOutlined } from '@ant-design/icons';
 import { EventStreamContentType, fetchEventSource } from '@microsoft/fetch-event-source';
@@ -84,7 +84,7 @@ const InputContainer: React.FC = () => {
     setHistory([...history, ...tempHistory]);
     setCanNewChat(false);
     try {
-      await fetchEventSource(`${process.env.API_BASE_URL ?? ''}/api/v1/chat/completions`, {
+      await fetchEventSource(`${getApiBaseUrl()}/api/v1/chat/completions`, {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',

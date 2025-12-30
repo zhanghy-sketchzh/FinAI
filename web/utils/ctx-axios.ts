@@ -1,7 +1,8 @@
 import axios from 'axios';
+import { getApiBaseUrl } from './index';
 
 const api = axios.create({
-  baseURL: process.env.API_BASE_URL ?? '',
+  baseURL: getApiBaseUrl(),
 });
 
 api.defaults.timeout = 10000;

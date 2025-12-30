@@ -3,7 +3,7 @@ import { apiInterceptors, getAppInfo, getChatHistory, getDialogueList, postChatM
 import useUser from '@/hooks/use-user';
 import { IApp } from '@/types/app';
 import { ChatHistoryResponse } from '@/types/chat';
-import { getUserId } from '@/utils';
+import { getApiBaseUrl, getUserId } from '@/utils';
 import { HEADER_USER_ID_KEY } from '@/utils/constants/index';
 import { EventStreamContentType, fetchEventSource } from '@microsoft/fetch-event-source';
 import { useRequest } from 'ahooks';
@@ -236,7 +236,7 @@ const MobileChat: React.FC = () => {
     setHistory([...history, ...tempHistory]);
     setCanNewChat(false);
     try {
-      await fetchEventSource(`${process.env.API_BASE_URL ?? ''}/api/v1/chat/completions`, {
+      await fetchEventSource(`${getApiBaseUrl()}/api/v1/chat/completions`, {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',

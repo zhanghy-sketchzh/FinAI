@@ -9,6 +9,18 @@ export const STORAGE_INIT_MESSAGE_KET = '__db_gpt_im_key';
 /** Flow nodes */
 export const FLOW_NODES_KEY = '__db_gpt_static_flow_nodes_key';
 
+// 动态获取 API base URL：优先使用环境变量，否则使用当前页面的 origin
+export function getApiBaseUrl(): string {
+  if (process.env.API_BASE_URL) {
+    return process.env.API_BASE_URL;
+  }
+  // 在浏览器环境中，使用当前页面的 origin
+  if (typeof window !== 'undefined') {
+    return window.location.origin;
+  }
+  return '';
+}
+
 export function formatSql(sql: string, lang?: string) {
   if (!sql) return '';
   try {
@@ -43,8 +55,7 @@ export const transformFileUrl = (url: string): string => {
     const fileId = pathParts[1];
 
     // Transform to service URL
-    // Using process.env.API_BASE_URL as the base
-    return `${process.env.API_BASE_URL || ''}/api/v2/serve/file/files/${bucket}/${fileId}${parsedUrl.search}`;
+    return `${getApiBaseUrl()}/api/v2/serve/file/files/${bucket}/${fileId}${parsedUrl.search}`;
   } catch (e) {
     console.error('Error transforming file URL:', e);
     return url; // Return original URL if transformation fails
