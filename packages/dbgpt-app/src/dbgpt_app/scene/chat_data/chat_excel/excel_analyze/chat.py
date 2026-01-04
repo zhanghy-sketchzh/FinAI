@@ -1112,16 +1112,21 @@ class ChatExcel(BaseChat):
                             view_message = f"{prefix_content}\n\n{summary_text}"
                         else:
                             view_message = summary_text
-                        
-                        # 如果有推荐问题，在view_msg末尾添加特殊标记
-                        if suggested_questions:
-                            questions_json = json.dumps({"suggested_questions": suggested_questions}, ensure_ascii=False)
-                            view_message += f"\n\n<!--SUGGESTED_QUESTIONS:{questions_json}-->"
                     else:
+                        # 即使总结为空，也显示查询结果和提示信息
+                        detected_language = getattr(self, "_detected_language", "zh")
+                        is_english = detected_language == "en"
+                        no_result_msg = "查询已完成，但未生成总结。查询结果如下：" if not is_english else "Query completed, but no summary was generated. Query results:"
+                        
                         if prefix_content:
-                            view_message = f"{prefix_content}\n\n{view_msg}"
+                            view_message = f"{prefix_content}\n\n{no_result_msg}\n\n{view_msg}"
                         else:
-                            view_message = view_msg
+                            view_message = f"{no_result_msg}\n\n{view_msg}"
+                    
+                    # 如果有推荐问题，在view_msg末尾添加特殊标记
+                    if suggested_questions:
+                        questions_json = json.dumps({"suggested_questions": suggested_questions}, ensure_ascii=False)
+                        view_message += f"\n\n<!--SUGGESTED_QUESTIONS:{questions_json}-->"
                     
                     view_message = full_output.gen_text_with_thinking(new_text=view_message)
                     ai_response_text = self._combine_thinking_and_text(full_output, view_message)
@@ -1300,11 +1305,6 @@ class ChatExcel(BaseChat):
 
             logger.info(f"找到的chart-view数量: {len(matches)}")
 
-            if not matches:
-                logger.warning("未找到chart-view标签，直接返回空结果")
-                yield {"summary": "", "suggested_questions": []}
-                return
-
             all_sql_results = []
             for match_str in matches:
                 content_str = html.unescape(match_str)
@@ -1313,12 +1313,26 @@ class ChatExcel(BaseChat):
                 sql = content_data.get("sql", "").strip()
                 query_data = content_data.get("data", [])
 
-                if query_data:
-                    all_sql_results.append({"sql": sql, "result": query_data})
+                # 即使查询结果为空，也记录SQL和结果（空数组）
+                all_sql_results.append({"sql": sql, "result": query_data})
 
+            # 如果没有找到chart-view标签，尝试从原始文本中提取SQL
             if not all_sql_results:
-                yield {"summary": "", "suggested_questions": []}
-                return
+                # 尝试从api-call标签中提取SQL
+                api_call_pattern = r'<api-call>.*?<sql>(.*?)</sql>.*?</api-call>'
+                api_matches = re.findall(api_call_pattern, original_text, re.DOTALL)
+                if api_matches:
+                    for sql in api_matches:
+                        sql = sql.strip()
+                        if sql:
+                            # 即使没有查询结果，也记录SQL（结果为空数组）
+                            all_sql_results.append({"sql": sql, "result": []})
+                            logger.info(f"从api-call标签提取到SQL: {sql[:100]}")
+
+            # 即使没有SQL结果，也生成总结（说明查询无结果）
+            if not all_sql_results:
+                logger.warning("未找到chart-view标签和api-call标签，但仍生成总结")
+                # 继续执行，生成一个说明查询无结果的总结
 
             history_context = ""
             if self.history_messages and len(self.history_messages) > 0:
@@ -1363,14 +1377,28 @@ class ChatExcel(BaseChat):
             is_english = detected_language == "en"
 
             sql_results_text = ""
-            for i, sql_result in enumerate(all_sql_results, 1):
-                sql_label = f"Executed SQL {i}" if is_english else f"执行的SQL {i}"
-                result_label = f"Query Result {i}" if is_english else f"查询结果 {i}"
-                sql_results_text += f"\n{sql_label}：\n{sql_result['sql']}\n\n"
-                result_json = json.dumps(
-                    sql_result["result"], ensure_ascii=False, indent=2
-                )
-                sql_results_text += f"{result_label}：\n{result_json}\n"
+            if all_sql_results:
+                for i, sql_result in enumerate(all_sql_results, 1):
+                    sql_label = f"Executed SQL {i}" if is_english else f"执行的SQL {i}"
+                    result_label = f"Query Result {i}" if is_english else f"查询结果 {i}"
+                    sql_results_text += f"\n{sql_label}：\n{sql_result['sql']}\n\n"
+                    result_json = json.dumps(
+                        sql_result["result"], ensure_ascii=False, indent=2
+                    )
+                    sql_results_text += f"{result_label}：\n{result_json}\n"
+                    
+                    # 如果查询结果为空，添加说明
+                    if not sql_result["result"]:
+                        if is_english:
+                            sql_results_text += "\n**Note**: The query returned no results (empty result set).\n"
+                        else:
+                            sql_results_text += "\n**注意**：查询结果为空（未找到匹配的数据）。\n"
+            else:
+                # 如果没有SQL结果，添加说明
+                if is_english:
+                    sql_results_text = "\n**Note**: No SQL query was executed or no query results were found.\n"
+                else:
+                    sql_results_text = "\n**注意**：未执行SQL查询或未找到查询结果。\n"
 
             # 获取数据schema信息，用于生成推荐问题
             data_schema_info = ""
@@ -1471,7 +1499,7 @@ Please output a JSON object with the following structure:
 - **Constraints**:
   * Do NOT speculate, extrapolate, or provide subjective interpretations
 - **Output Requirements**:
-  * One paragraph, no more than 4 sentences
+  * One sentence summary, no more than 100 words
   * Must be in ENGLISH
 
 **Requirements for suggested_questions**:
@@ -1521,7 +1549,7 @@ Please output the JSON directly, without any other text:"""  # noqa: E501
 - **约束条件**：
   * 不要进行推测、延伸或主观解读
 - **输出要求**：
-  * 一段话，不超过 4 句话
+  * 一句话总结，不超过100字
   * 必须使用**中文**
 
 **推荐问题的要求**：

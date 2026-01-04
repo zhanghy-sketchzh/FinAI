@@ -396,6 +396,10 @@ class QueryRewriteAgent:
 - "rewritten_query"、"usage"、"analysis_suggestions"、"analysis_logic" 等字段必须使用**中文**
 - 即使表字段名是中英文混合，你的描述和分析也必须使用**中文**
 
+**重要 - 字符串精确匹配要求**：
+- 在改写问题时，如果用户提到了具体的部门名称、分类值等字符串，必须保持完全一致
+- 如果用户问题中包含具体的字符串值，在"rewritten_query"中必须保持原样，不能修改
+
 现在请结合历史上下文及用户当前问题，分析用户的真实意图，补充改写当前问题并用中文输出JSON：
 """
         else:
@@ -454,6 +458,10 @@ Please strictly follow the following JSON format:
 - You MUST respond in ENGLISH for ALL fields in the JSON output
 - The "rewritten_query", "usage", "analysis_suggestions", and "analysis_logic" fields MUST be in ENGLISH
 - Even though the table field names are in Chinese, your descriptions and analysis MUST be in ENGLISH
+
+**IMPORTANT - String Exact Matching Requirement**:
+- When rewriting the question, if the user mentions specific department names, category values, or other strings, they must be kept exactly as they are
+- If the user's question contains specific string values, they must be kept unchanged in "rewritten_query"
 
 Now please combine the historical context and the user's current question, analyze the user's real intent, enhance the current question and output JSON IN ENGLISH:
 """

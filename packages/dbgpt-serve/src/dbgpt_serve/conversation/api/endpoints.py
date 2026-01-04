@@ -333,10 +333,10 @@ async def clear_all_caches():
     try:
         # 查找 clear_excel_cache.py 脚本
         project_root = Path(__file__).parent
-        while project_root.name != "Finai" and project_root.parent != project_root:
+        while project_root.name != "FinAI" and project_root.parent != project_root:
             project_root = project_root.parent
 
-        if project_root.name != "Finai":
+        if project_root.name != "FinAI":
             return Result.failed(err_code="E0001", msg="无法找到项目根目录")
 
         script_path = project_root / "clear_excel_cache.py"

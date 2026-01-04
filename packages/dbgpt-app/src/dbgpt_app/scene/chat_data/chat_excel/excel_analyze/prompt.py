@@ -39,6 +39,15 @@ _DUCKDB_RULES_ZH = """
 **【极其重要】列名必须完全匹配：**
 - 必须使用表结构中提供的**完整列名**，包括所有括号、连字符等特殊字符
 - 列名必须**逐字符精确匹配**表结构中的定义
+- **字符串匹配必须精确**：在WHERE子句中使用字符串条件时，必须完全匹配数据中的实际值，不能随意替换字符（如"和"不能替换为"与"，"部门"不能替换为"部"等）
+
+### 【字符串匹配精确规则】：
+- **必须精确匹配**：在WHERE子句中使用字符串条件时，必须完全匹配数据中的实际值
+- **禁止字符替换**：不能随意替换字符，例如：
+  * "和"不能替换为"与"（如"风险管理和内部控制部门"不能写成"风险管理与内部控制部门"）
+  * "部门"不能替换为"部"
+  * 不能省略或添加任何字符
+- **建议做法**：如果不确定精确值，可以使用LIKE或IN操作符，但必须基于实际数据中的值
 
 ### 【GROUP BY 关键规则】：
 1. SELECT 中的非聚合列必须在 GROUP BY 中
@@ -75,6 +84,14 @@ _DUCKDB_RULES_EN = """
 
 **NEVER use digit-starting field names without double quotes!**
 
+### 【String Matching Precision Rules】：
+- **Must match exactly**: When using string conditions in WHERE clause, must exactly match the actual values in the data
+- **No character substitution**: Cannot arbitrarily replace characters, for example:
+  * "和" cannot be replaced with "与" (e.g., "风险管理和内部控制部门" cannot be written as "风险管理与内部控制部门")
+  * "部门" cannot be replaced with "部"
+  * Cannot omit or add any characters
+- **Recommended approach**: If unsure of exact value, use LIKE or IN operators, but must be based on actual values in the data
+
 ### 【GROUP BY Key Rules】：
 1. Non-aggregate columns in SELECT must be in GROUP BY
 2. Columns in ORDER BY must be properly selected in preceding CTE or query
@@ -103,6 +120,7 @@ _DUCKDB_RULES_EN = """
 _ANALYSIS_CONSTRAINTS_ZH = """
 表名：{table_name}
 列名规则：中文/数字开头/特殊字符必须用双引号;不要使用 UNION / UNION ALL，如需多个结果请分别查询；时间戳处理使用 to_timestamp() 而非直接 CAST；注释行必须单独成行，不要放在 SQL 语句的同一行
+字符串匹配规则：WHERE子句中的字符串条件必须完全匹配数据中的实际值，不能随意替换字符（如"和"不能替换为"与"），建议使用LIKE或IN操作符基于实际数据值
 子查询规则：禁止在 SELECT 列表中使用返回多行的子查询（会导致"More than one row returned"错误），应使用 JOIN 或窗口函数替代
 数值格式化：所有数值列和聚合结果必须使用 ROUND(column, 2) 保留两位小数
 图表优先：默认使用图表，分类对比用bar/pie，时序用line/area，仅明细记录用table
@@ -113,6 +131,7 @@ _ANALYSIS_CONSTRAINTS_ZH = """
 _ANALYSIS_CONSTRAINTS_EN = """
 Table: {table_name}
 Column rules: Chinese/digit-starting/special chars need double quotes
+String matching rules: String conditions in WHERE clause must exactly match actual values in data, cannot arbitrarily replace characters (e.g., "和" cannot be replaced with "与"), recommend using LIKE or IN operators based on actual data values
 Subquery rules: NEVER use subqueries in SELECT list that return multiple rows (causes "More than one row returned" error), use JOIN or window functions instead
 Numeric formatting: All numeric columns and aggregate results must use ROUND(column, 2) to retain 2 decimal places
 Chart priority: Default to charts, categorical use bar/pie, time-series use line/area, only detailed records use table
