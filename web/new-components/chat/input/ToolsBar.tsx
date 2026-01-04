@@ -11,7 +11,7 @@ import { useTranslation } from 'react-i18next';
 
 import { parseResourceValue, transformFileUrl } from '@/utils';
 
-import ModelSwitcher from './ModelSwitcher';
+// import ModelSwitcher from './ModelSwitcher';
 import Resource from './Resource';
 
 interface ToolsConfig {
@@ -275,7 +275,7 @@ const ToolsBar: React.FC<{
     <div className='flex flex-col  mb-2'>
       <div className='flex items-center justify-between h-full w-full'>
         <div className='flex gap-3 text-lg'>
-          <ModelSwitcher />
+          {/* <ModelSwitcher /> */}
           <Resource fileList={fileList} setFileList={setFileList} setLoading={setLoading} fileName={fileName} />
           {/* Temperature and MaxNewTokens icons hidden */}
         </div>

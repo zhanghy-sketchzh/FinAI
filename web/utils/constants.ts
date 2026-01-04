@@ -177,6 +177,11 @@ export function getModelLabel(modelId: string): string {
 }
 
 export function getModelIcon(modelId: string): string {
+  // 统一返回 huggingface.svg 图标
+  return '/models/huggingface.svg';
+  
+  // 以下代码已注释，不再使用
+  /*
   if (!modelId) return DEFAULT_ICON_URL;
 
   // Format the model ID for matching
@@ -210,6 +215,7 @@ export function getModelIcon(modelId: string): string {
 
   // If no match, return the default icon
   return DEFAULT_ICON_URL;
+  */
 }
 
 export const dbMapper: Record<DBType, { label: string; icon: string; desc: string }> = {

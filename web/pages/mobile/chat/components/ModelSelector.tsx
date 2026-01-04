@@ -1,12 +1,11 @@
-import { ChatContext } from '@/app/chat-context';
-import ModelIcon from '@/new-components/chat/content/ModelIcon';
-import { SwapOutlined } from '@ant-design/icons';
-import type { MenuProps } from 'antd';
-import { Dropdown, Popover } from 'antd';
-import React, { useContext, useMemo } from 'react';
-import { MobileChatContext } from '../';
+import React from 'react';
 
 const ModelSelector: React.FC = () => {
+  // 隐藏模型选择器，因为只指定了一个模型
+  return null;
+
+  // 以下代码已注释，不再使用
+  /*
   const { modelList } = useContext(ChatContext);
   const { model, setModel } = useContext(MobileChatContext);
 
@@ -56,6 +55,7 @@ const ModelSelector: React.FC = () => {
       </Popover>
     </Dropdown>
   );
+  */
 };
 
 export default ModelSelector;

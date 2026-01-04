@@ -1,5 +1,5 @@
 import { ChatContext } from '@/app/chat-context';
-import ModelSelector from '@/components/chat/header/model-selector';
+// import ModelSelector from '@/components/chat/header/model-selector';
 import ModeTab from '@/components/chat/mode-tab';
 import { useContext } from 'react';
 import AgentSelector from './agent-selector';
@@ -14,13 +14,13 @@ interface Props {
   modelChange?: (val: string) => void;
 }
 
-function Header({ refreshHistory, modelChange }: Props) {
+function Header({ refreshHistory, modelChange: _modelChange }: Props) {
   const { scene, refreshDialogList } = useContext(ChatContext);
 
   return (
     <div className='w-full py-2 px-4 md:px-4 flex flex-wrap items-center justify-center gap-1 md:gap-4'>
       {/* Models Selector */}
-      <ModelSelector onChange={modelChange} />
+      {/* <ModelSelector onChange={modelChange} /> */}
       {/* DB Selector */}
       <DBSelector />
       {/* Excel Upload */}

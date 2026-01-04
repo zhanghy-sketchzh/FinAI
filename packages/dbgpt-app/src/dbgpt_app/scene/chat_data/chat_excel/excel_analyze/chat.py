@@ -514,6 +514,15 @@ class ChatExcel(BaseChat):
         content = re.sub(
             r"<!--SUGGESTED_QUESTIONS:.*?-->", "", content, flags=re.DOTALL
         )
+        
+        # 去除 vis-thinking 标签（匹配任意数量的反引号，从3个到6个）
+        # 匹配格式：```vis-thinking ... ``` 或 ``````vis-thinking ... ``````
+        content = re.sub(
+            r"`{3,6}vis-thinking.*?`{3,6}", "", content, flags=re.DOTALL
+        )
+        
+        # 清理多余的空行（将3个或更多连续换行符替换为2个）
+        content = re.sub(r"\n{3,}", "\n\n", content)
 
         lines = content.split("\n")
         cleaned_lines = []

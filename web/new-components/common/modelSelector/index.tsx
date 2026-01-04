@@ -1,34 +1,29 @@
-import { ChatContext } from '@/app/chat-context';
-import { apiInterceptors, getUsableModels } from '@/client/api';
-import { MODEL_ICON_MAP } from '@/utils/constants';
-import { CaretDownOutlined } from '@ant-design/icons';
-import { useRequest } from 'ahooks';
-import { Select } from 'antd';
 import Image from 'next/image';
-import React, { useContext, useState } from 'react';
-import { useTranslation } from 'react-i18next';
-
-import styles from './styles.module.css';
-
-const DEFAULT_ICON_URL = '/models/huggingface.svg';
+import React from 'react';
 
 export function renderModelIcon(model?: string, props?: { width: number; height: number }) {
   const { width, height } = props || {};
 
   if (!model) return null;
 
+  // 统一使用 huggingface.svg 图标
   return (
     <Image
       className='rounded-full border border-gray-200 object-contain bg-white inline-block'
       width={width || 24}
       height={height || 24}
-      src={MODEL_ICON_MAP[model]?.icon || DEFAULT_ICON_URL}
+      src='/models/huggingface.svg'
       alt='llm'
     />
   );
 }
 
 const ModelSelector: React.FC = () => {
+  // 隐藏模型选择器，因为只指定了一个模型
+  return null;
+  
+  // 以下代码已注释，不再使用
+  /*
   const { t } = useTranslation();
   const { model, setModel } = useContext(ChatContext);
 
@@ -67,6 +62,7 @@ const ModelSelector: React.FC = () => {
       </Select>
     </div>
   );
+  */
 };
 
 export default ModelSelector;
