@@ -337,11 +337,11 @@ async def clear_all_caches():
             project_root = project_root.parent
 
         if project_root.name != "Finai":
-            return Result.failed(code="E0001", msg="无法找到项目根目录")
+            return Result.failed(err_code="E0001", msg="无法找到项目根目录")
 
         script_path = project_root / "clear_excel_cache.py"
         if not script_path.exists():
-            return Result.failed(code="E0002", msg=f"清除缓存脚本不存在: {script_path}")
+            return Result.failed(err_code="E0002", msg=f"清除缓存脚本不存在: {script_path}")
 
         # 执行清除缓存脚本
         result = subprocess.run(
@@ -358,13 +358,13 @@ async def clear_all_caches():
             return Result.succ({"message": "所有缓存已清除", "output": result.stdout})
         else:
             return Result.failed(
-                code="E0003", msg=f"清除缓存失败: {result.stderr or result.stdout}"
+                err_code="E0003", msg=f"清除缓存失败: {result.stderr or result.stdout}"
             )
 
     except subprocess.TimeoutExpired:
-        return Result.failed(code="E0004", msg="清除缓存操作超时")
+        return Result.failed(err_code="E0004", msg="清除缓存操作超时")
     except Exception as e:
-        return Result.failed(code="E0005", msg=f"清除缓存时发生错误: {str(e)}")
+        return Result.failed(err_code="E0005", msg=f"清除缓存时发生错误: {str(e)}")
 
 
 def init_endpoints(system_app: SystemApp, config: ServeConfig) -> None:
