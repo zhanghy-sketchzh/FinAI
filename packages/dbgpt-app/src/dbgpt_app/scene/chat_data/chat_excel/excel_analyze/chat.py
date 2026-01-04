@@ -16,6 +16,7 @@ from dbgpt.core import (
     ModelMessageRoleType,
     ModelOutput,
     ModelRequest,
+    ModelRequestContext,
     SystemPromptTemplate,
 )
 from dbgpt.core.interface.file import _SCHEMA, FileStorageClient
@@ -301,66 +302,11 @@ class ChatExcel(BaseChat):
             data_schema_json = select_param_dict.get("data_schema_json")
 
             if data_schema_json:
-                try:
-                    from dbgpt_app.scene.chat_data.chat_excel.query_rewrite import (
-                        QueryRewriteAgent,
-                    )
+                # 使用stream_call中完成的查询改写结果
+                rewrite_result = self._query_rewrite_result
 
-                    rewrite_agent = QueryRewriteAgent(self.llm_client, self.llm_model)
-
-                    chat_history = []
-                    if hasattr(self, "history_messages") and self.history_messages:
-                        current_round_messages = []
-                        last_role = None
-
-                        for msg in self.history_messages:
-                            if not hasattr(msg, "content"):
-                                continue
-
-                            role = getattr(msg, "role", "user")
-                            content = msg.content
-
-                            if hasattr(content, "get_text"):
-                                try:
-                                    content = content.get_text()
-                                except Exception:
-                                    content = str(content)
-                            elif isinstance(content, list):
-                                text_parts = []
-                                for item in content:
-                                    if hasattr(item, "object") and hasattr(
-                                        item.object, "data"
-                                    ):
-                                        text_parts.append(str(item.object.data))
-                                    else:
-                                        text_parts.append(str(item))
-                                content = " ".join(text_parts)
-                            else:
-                                content = str(content)
-
-                            content = self._clean_history_content(content)
-
-                            if role == last_role and current_round_messages:
-                                current_round_messages[-1]["content"] += "\n" + content
-                            else:
-                                current_round_messages.append(
-                                    {"role": role, "content": content}
-                                )
-                                last_role = role
-
-                        chat_history = current_round_messages
-
-                    rewrite_result = await blocking_func_to_async(
-                        self._executor,
-                        rewrite_agent.rewrite_query,
-                        self.current_user_input.last_text,
-                        data_schema_json,
-                        table_schema,
-                        chat_history,
-                    )
-
-                    if rewrite_result and rewrite_result.get("rewritten_query"):
-                        query_rewrite_info = f"""
+                if rewrite_result and rewrite_result.get("rewritten_query"):
+                    query_rewrite_info = f"""
 
 
 用户的问题：{rewrite_result["rewritten_query"]}
@@ -376,50 +322,48 @@ class ChatExcel(BaseChat):
 
 接下来请按照格式要求生成sql语句进行查询。
 """
-                        self._query_rewrite_result = rewrite_result
+                    extracted_knowledge = rewrite_result.get("_extracted_knowledge")
+                    if extracted_knowledge:
+                        await self._save_domain_knowledge(
+                            extracted_knowledge, data_schema_json
+                        )
 
-                        extracted_knowledge = rewrite_result.get("_extracted_knowledge")
-                        if extracted_knowledge:
-                            await self._save_domain_knowledge(
-                                extracted_knowledge, data_schema_json
-                            )
+                    try:
+                        schema_obj = (
+                            json.loads(data_schema_json)
+                            if isinstance(data_schema_json, str)
+                            else data_schema_json
+                        )
+                        all_columns = schema_obj.get("columns", [])
 
-                        try:
-                            schema_obj = (
-                                json.loads(data_schema_json)
-                                if isinstance(data_schema_json, str)
-                                else data_schema_json
-                            )
-                            all_columns = schema_obj.get("columns", [])
+                        relevant_col_names = [
+                            col.get("column_name", "")
+                            for col in rewrite_result.get("relevant_columns", [])
+                        ]
 
-                            relevant_col_names = [
-                                col.get("column_name", "")
-                                for col in rewrite_result.get("relevant_columns", [])
-                            ]
+                        relevant_columns_details = []
+                        for col_name in relevant_col_names:
+                            for col_info in all_columns:
+                                if col_info.get("column_name") == col_name:
+                                    relevant_columns_details.append(col_info)
+                                    break
 
-                            relevant_columns_details = []
-                            for col_name in relevant_col_names:
-                                for col_info in all_columns:
-                                    if col_info.get("column_name") == col_name:
-                                        relevant_columns_details.append(col_info)
-                                        break
-
-                            if relevant_columns_details:
-                                relevant_columns_info = (
-                                    self._format_relevant_columns_for_prompt(
-                                        relevant_columns_details
-                                    )
+                        if relevant_columns_details:
+                            relevant_columns_info = (
+                                self._format_relevant_columns_for_prompt(
+                                    relevant_columns_details
                                 )
-                            else:
-                                relevant_columns_info = "未找到相关列的详细信息。"
+                            )
+                        else:
+                            relevant_columns_info = "未找到相关列的详细信息。"
 
-                        except Exception as col_err:
-                            logger.warning(f"提取列详细信息失败: {col_err}")
-                            relevant_columns_info = ""
-
-                except Exception as e:
-                    logger.warning(f"Query改写失败，使用原始问题: {e}")
-                    self._query_rewrite_result = None
+                    except Exception as col_err:
+                        logger.warning(f"提取列详细信息失败: {col_err}")
+                        relevant_columns_info = ""
+                else:
+                    # 如果查询改写失败或没有结果，设置默认值
+                    query_rewrite_info = ""
+                    relevant_columns_info = ""
 
         from dbgpt_app.scene.chat_data.chat_excel.excel_analyze.prompt import (
             _ANALYSIS_CONSTRAINTS_TEMPLATE,
@@ -561,8 +505,14 @@ class ChatExcel(BaseChat):
     def _clean_history_content(self, content: str) -> str:
         import re
 
+        # 去除 chart-view 标签
         content = re.sub(
             r"<chart-view[^>]*>.*?</chart-view>", "", content, flags=re.DOTALL
+        )
+        
+        # 去除 SUGGESTED_QUESTIONS 标记
+        content = re.sub(
+            r"<!--SUGGESTED_QUESTIONS:.*?-->", "", content, flags=re.DOTALL
         )
 
         lines = content.split("\n")
@@ -940,27 +890,149 @@ class ChatExcel(BaseChat):
                 text,
                 self.excel_reader.get_df_by_sql_ex,
             )
+            logger.info(f"stream_plugin_call 返回结果长度: {len(result) if result else 0}")
+            logger.debug(f"stream_plugin_call 返回内容（前500字符）: {result[:500] if result else 'None'}")
             return result
 
     async def stream_call(self, text_output: bool = True, incremental: bool = False):
-        await self.generate_input_values()
+        # 先进行流式查询改写
+        await self._ensure_data_analysis_table_exists()
+        
+        user_input = self.current_user_input.last_text
+        detected_language = detect_language(user_input)
+        self._detected_language = detected_language
 
-        if self._query_rewrite_result:
-            thinking_stage1 = self._format_query_rewrite_thinking(
-                self._query_rewrite_result
-            )
-            if thinking_stage1:
-                from dbgpt.vis.tags.vis_thinking import VisThinking
+        select_param_dict = self.select_param
+        if isinstance(self.select_param, str):
+            try:
+                select_param_dict = json.loads(self.select_param)
+            except Exception as e:
+                logger.warning(f"解析select_param JSON失败: {e}")
+                select_param_dict = None
 
-                vis_thinking_output = VisThinking().sync_display(
-                    content=thinking_stage1
+        # 检查是否需要查询改写
+        need_rewrite = False
+        data_schema_json = None
+        table_schema = None
+        chat_history = []
+        
+        if select_param_dict and isinstance(select_param_dict, dict):
+            data_schema_json = select_param_dict.get("data_schema_json")
+            if data_schema_json:
+                need_rewrite = True
+                # 获取表结构
+                table_schema = await blocking_func_to_async(
+                    self._executor, self.excel_reader.get_create_table_sql, self._curr_table
                 )
-                if text_output:
-                    yield vis_thinking_output
-                else:
-                    yield ModelOutput.build(
-                        text=vis_thinking_output, error_code=0, finish_reason="continue"
+                # 构建聊天历史
+                if hasattr(self, "history_messages") and self.history_messages:
+                    current_round_messages = []
+                    last_role = None
+
+                    for msg in self.history_messages:
+                        if not hasattr(msg, "content"):
+                            continue
+
+                        role = getattr(msg, "role", "user")
+                        content = msg.content
+
+                        if hasattr(content, "get_text"):
+                            try:
+                                content = content.get_text()
+                            except Exception:
+                                content = str(content)
+                        elif isinstance(content, list):
+                            text_parts = []
+                            for item in content:
+                                if hasattr(item, "object") and hasattr(
+                                    item.object, "data"
+                                ):
+                                    text_parts.append(str(item.object.data))
+                                else:
+                                    text_parts.append(str(item))
+                            content = " ".join(text_parts)
+                        else:
+                            content = str(content)
+
+                        content = self._clean_history_content(content)
+
+                        if role == last_role and current_round_messages:
+                            current_round_messages[-1]["content"] += "\n" + content
+                        else:
+                            current_round_messages.append(
+                                {"role": role, "content": content}
+                            )
+                            last_role = role
+
+                    chat_history = current_round_messages
+
+        # 如果需要查询改写，先进行流式改写
+        if need_rewrite and self.llm_client:
+            try:
+                from dbgpt_app.scene.chat_data.chat_excel.query_rewrite import (
+                    QueryRewriteAgent,
+                )
+
+                rewrite_agent = QueryRewriteAgent(self.llm_client, self.llm_model)
+                
+                # 流式输出查询改写结果
+                rewrite_result = None
+                
+                async for chunk in rewrite_agent.rewrite_query_stream(
+                    self.current_user_input.last_text,
+                    data_schema_json,
+                    table_schema,
+                    chat_history,
+                ):
+                    if isinstance(chunk, str):
+                        # 流式输出原始文本（JSON格式）
+                        # 输出完整内容，让前端看到逐渐增长的完整JSON
+                        if text_output:
+                            # 直接输出完整JSON文本，前端会实时显示完整内容
+                            yield chunk
+                        else:
+                            # 使用ModelOutput格式，输出完整内容
+                            yield ModelOutput.build(
+                                text=chunk,
+                                error_code=0,
+                                finish_reason="continue"
+                            )
+                    elif isinstance(chunk, dict):
+                        # 解析完成，保存结果
+                        rewrite_result = chunk
+                        self._query_rewrite_result = rewrite_result
+                        
+                        # 保存领域知识
+                        extracted_knowledge = rewrite_result.get("_extracted_knowledge")
+                        if extracted_knowledge:
+                            await self._save_domain_knowledge(
+                                extracted_knowledge, data_schema_json
+                            )
+                        break
+                
+                # 输出完成后，展示格式化后的结果
+                if rewrite_result:
+                    thinking_stage1 = self._format_query_rewrite_thinking(
+                        rewrite_result
                     )
+                    if thinking_stage1:
+                        from dbgpt.vis.tags.vis_thinking import VisThinking
+
+                        vis_thinking_output = VisThinking().sync_display(
+                            content=thinking_stage1
+                        )
+                        if text_output:
+                            yield vis_thinking_output
+                        else:
+                            yield ModelOutput.build(
+                                text=vis_thinking_output, error_code=0, finish_reason="continue"
+                            )
+            except Exception as e:
+                logger.warning(f"流式Query改写失败，使用原始问题: {e}")
+                self._query_rewrite_result = None
+
+        # 生成输入值（如果已经完成查询改写，会使用缓存的结果）
+        await self.generate_input_values()
 
         payload = await self._build_model_request()
         self._last_sql_error = None
@@ -971,32 +1043,94 @@ class ChatExcel(BaseChat):
         
         if full_output:
             try:
-                ai_response_text, view_message = await self._handle_final_output(
-                    full_output, incremental=incremental
-                )
+                text_msg = full_output.text if full_output.has_text else ""
+                view_msg = self.stream_plugin_call(text_msg)
 
-                final_output_parts = []
-
-                if self._query_rewrite_result:
-                    thinking_stage1 = self._format_query_rewrite_thinking(
-                        self._query_rewrite_result
-                    )
-                    if thinking_stage1:
-                        from dbgpt.vis.tags.vis_thinking import VisThinking
-
-                        vis_thinking_output = VisThinking().sync_display(
-                            content=thinking_stage1
+                if self._last_sql_error:
+                    logger.warning(f"SQL执行失败，跳过总结生成: {self._last_sql_error[:100]}")
+                    view_msg = full_output.gen_text_with_thinking(new_text=view_msg)
+                    ai_full_response = self._combine_thinking_and_text(full_output, view_msg)
+                    ai_response_text = ai_full_response
+                    view_message = view_msg
+                else:
+                    # 构建前置内容（思考结果 + 图表）
+                    import re
+                    prefix_parts = []
+                    
+                    # 1. 添加问题改写的思考结果
+                    if self._query_rewrite_result:
+                        thinking_stage1 = self._format_query_rewrite_thinking(
+                            self._query_rewrite_result
                         )
-                        final_output_parts.append(vis_thinking_output)
-
-                final_output_parts.append(view_message)
-                complete_output = "\n\n".join(final_output_parts)
+                        if thinking_stage1:
+                            from dbgpt.vis.tags.vis_thinking import VisThinking
+                            vis_thinking_output = VisThinking().sync_display(
+                                content=thinking_stage1
+                            )
+                            prefix_parts.append(vis_thinking_output)
+                    
+                    # 2. 提取图表内容
+                    chart_pattern = r"(<chart-view.*?</chart-view>)"
+                    chart_matches = re.findall(chart_pattern, view_msg, re.DOTALL)
+                    if chart_matches:
+                        all_chart_views = "\n\n".join(chart_matches)
+                        prefix_parts.append(all_chart_views)
+                    
+                    # 组合前置内容
+                    prefix_content = "\n\n".join(prefix_parts) if prefix_parts else ""
+                    
+                    # 流式输出summary
+                    summary_result = None
+                    async for chunk in self._generate_result_summary_stream(
+                        text_msg, view_msg, text_output=text_output
+                    ):
+                        if isinstance(chunk, str):
+                            # 流式输出：前置内容 + summary文本
+                            combined_output = f"{prefix_content}\n\n{chunk}" if prefix_content else chunk
+                            if text_output:
+                                yield combined_output
+                            else:
+                                yield ModelOutput.build(
+                                    text=combined_output,
+                                    error_code=0,
+                                    finish_reason="continue"
+                                )
+                        elif isinstance(chunk, dict):
+                            # 流式输出完成，获取最终结果
+                            summary_result = chunk
+                            break
+                    
+                    summary_text = summary_result.get("summary", "") if summary_result else ""
+                    suggested_questions = summary_result.get("suggested_questions", []) if summary_result else []
+                    
+                    # 保存推荐问题到实例变量，供前端获取
+                    self._current_suggested_questions = suggested_questions
+                    
+                    # 组合最终输出
+                    if summary_text:
+                        if prefix_content:
+                            view_message = f"{prefix_content}\n\n{summary_text}"
+                        else:
+                            view_message = summary_text
+                        
+                        # 如果有推荐问题，在view_msg末尾添加特殊标记
+                        if suggested_questions:
+                            questions_json = json.dumps({"suggested_questions": suggested_questions}, ensure_ascii=False)
+                            view_message += f"\n\n<!--SUGGESTED_QUESTIONS:{questions_json}-->"
+                    else:
+                        if prefix_content:
+                            view_message = f"{prefix_content}\n\n{view_msg}"
+                        else:
+                            view_message = view_msg
+                    
+                    view_message = full_output.gen_text_with_thinking(new_text=view_message)
+                    ai_response_text = self._combine_thinking_and_text(full_output, view_message)
 
                 if text_output:
-                    yield complete_output
+                    yield view_message
                 else:
                     yield ModelOutput.build(
-                        complete_output,
+                        view_message,
                         "",
                         error_code=full_output.error_code if full_output else 0,
                         finish_reason=(
@@ -1143,19 +1277,33 @@ class ChatExcel(BaseChat):
             logger.warning(f"格式化Query改写thinking失败: {e}")
             return ""
 
-    async def _generate_result_summary(
-        self, original_text: str, view_msg: str
-    ) -> Dict[str, Any]:
+    async def _generate_result_summary_stream(
+        self, original_text: str, view_msg: str, text_output: bool = True
+    ):
+        """
+        流式生成结果总结
+        
+        Yields:
+            str: 流式输出的summary文本（只输出summary部分，不输出suggested_questions）
+            Dict: 最终完整结果（包含summary和suggested_questions）
+        """
         try:
             import html
             import json
             import re
 
+            logger.info(f"开始生成结果总结，view_msg长度: {len(view_msg)}")
+            logger.debug(f"view_msg内容（前500字符）: {view_msg[:500]}")
+
             chart_pattern = r'<chart-view content="([^"]+)">'
             matches = re.findall(chart_pattern, view_msg)
 
+            logger.info(f"找到的chart-view数量: {len(matches)}")
+
             if not matches:
-                return ""
+                logger.warning("未找到chart-view标签，直接返回空结果")
+                yield {"summary": "", "suggested_questions": []}
+                return
 
             all_sql_results = []
             for match_str in matches:
@@ -1169,7 +1317,8 @@ class ChatExcel(BaseChat):
                     all_sql_results.append({"sql": sql, "result": query_data})
 
             if not all_sql_results:
-                return ""
+                yield {"summary": "", "suggested_questions": []}
+                return
 
             history_context = ""
             if self.history_messages and len(self.history_messages) > 0:
@@ -1201,17 +1350,13 @@ class ChatExcel(BaseChat):
 
                     detected_language = getattr(self, "_detected_language", "zh")
                     is_english = detected_language == "en"
-                    role_display = (
-                        "User"
-                        if role == "human"
-                        else (
-                            "Assistant"
-                            if is_english
-                            else "用户"
-                            if role == "human"
-                            else "助手"
-                        )
-                    )
+                    
+                    # 正确识别角色
+                    if role == "human":
+                        role_display = "User" if is_english else "用户"
+                    else:  # role == "ai" or "assistant" or "view"
+                        role_display = "Assistant" if is_english else "助手"
+                    
                     history_context += f"{role_display}: {content}\n\n"
 
             detected_language = getattr(self, "_detected_language", "zh")
@@ -1299,14 +1444,14 @@ All Columns:
 
 **Task**:
 Based on the conversation history, current question, SQL query results, and data schema information above, please generate:
-1. A concise summary answering the user's current question (at least 100 words)
+1. An objective and accurate summary
 2. 9 follow-up questions that would help users explore the data further based on the current analysis results
 
 **Output Format**:
 Please output a JSON object with the following structure:
 ```json
 {{
-  "summary": "Your concise summary answering the user's question",
+  "summary": "Your objective summary based on SQL logic",
   "suggested_questions": [
     "Question 1 (simple question with standard answer)",
     "Question 2 (simple question with standard answer)",
@@ -1320,6 +1465,14 @@ Please output a JSON object with the following structure:
   ]
 }}
 ```
+
+**Requirements for summary**:
+- Explain the final query result
+- **Constraints**:
+  * Do NOT speculate, extrapolate, or provide subjective interpretations
+- **Output Requirements**:
+  * One paragraph, no more than 4 sentences
+  * Must be in ENGLISH
 
 **Requirements for suggested_questions**:
 - **First 6 questions**: Simple questions with clear standard answers 
@@ -1341,14 +1494,14 @@ Please output the JSON directly, without any other text:"""  # noqa: E501
 
 **任务**：
 根据上述历史对话、当前问题、SQL查询结果和数据表信息，请生成：
-1. 一句话总结，完整回答用户的当前问题(至少100字)
+1. 一段客观、准确的总结
 2. 9个基于当前分析结果的推荐问题，帮助用户进一步探索数据
 
 **输出格式**：
 请输出一个JSON对象，格式如下：
 ```json
 {{
-  "summary": "您的一句话总结，完整回答用户的问题",
+  "summary": "基于SQL逻辑的客观总结",
   "suggested_questions": [
     "问题1（简单问题，有标准答案）",
     "问题2（简单问题，有标准答案）",
@@ -1362,6 +1515,14 @@ Please output the JSON directly, without any other text:"""  # noqa: E501
   ]
 }}
 ```
+
+**总结的要求**：
+- 阐述最终查询结果
+- **约束条件**：
+  * 不要进行推测、延伸或主观解读
+- **输出要求**：
+  * 一段话，不超过 4 句话
+  * 必须使用**中文**
 
 **推荐问题的要求**：
 - **前6个问题**：简单的问题，有明确的标准答案
@@ -1381,18 +1542,124 @@ Please output the JSON directly, without any other text:"""  # noqa: E501
                 ],
                 temperature=0.3,
                 max_new_tokens=2048,
+                context=ModelRequestContext(stream=True),
             )
 
             if self.llm_client:
-                summary_output = await self.llm_client.generate(summary_request)
-                if summary_output and summary_output.text:
-                    output_text = summary_output.text.strip()
-                    logger.info(f"生成结果总结和推荐问题: {output_text[:200]}...")
-                    
-                    # 解析JSON响应
+                import inspect
+                
+                # 获取流式响应
+                stream_response = self.llm_client.generate_stream(summary_request)
+                
+                full_text = ""
+                previous_summary = ""
+                
+                if inspect.isasyncgen(stream_response):
+                    async for chunk in stream_response:
+                        chunk_text = ""
+                        try:
+                            if hasattr(chunk, "has_text") and chunk.has_text:
+                                chunk_text = chunk.text
+                            elif hasattr(chunk, "text"):
+                                try:
+                                    chunk_text = chunk.text
+                                except ValueError:
+                                    continue
+                        except Exception as e:
+                            logger.debug(f"获取chunk.text失败: {e}")
+                            continue
+                        
+                        if chunk_text:
+                            full_text = chunk_text
+                            
+                            # 尝试从流式JSON中提取summary部分
+                            try:
+                                # 查找 "summary" 字段的开始位置
+                                summary_start = full_text.find('"summary"')
+                                if summary_start >= 0:
+                                    # 找到summary字段值开始的位置（冒号后的引号）
+                                    value_start = full_text.find('"', summary_start + len('"summary"'))
+                                    if value_start >= 0:
+                                        value_start += 1  # 跳过开始引号
+                                        # 查找summary值的结束位置（考虑转义字符）
+                                        value_end = value_start
+                                        while value_end < len(full_text):
+                                            if full_text[value_end] == '"' and full_text[value_end - 1] != '\\':
+                                                break
+                                            value_end += 1
+                                        
+                                        if value_end > value_start:
+                                            current_summary = full_text[value_start:value_end]
+                                            # 输出完整的summary内容（逐渐增长）
+                                            if len(current_summary) > len(previous_summary):
+                                                previous_summary = current_summary
+                                                
+                                                if text_output:
+                                                    yield current_summary
+                                                else:
+                                                    yield ModelOutput.build(
+                                                        text=current_summary,
+                                                        error_code=0,
+                                                        finish_reason="continue"
+                                                    )
+                            except Exception as parse_err:
+                                # 如果解析失败，继续等待更多内容
+                                logger.debug(f"解析summary流式输出失败: {parse_err}")
+                                continue
+                elif inspect.isgenerator(stream_response):
+                    for chunk in stream_response:
+                        chunk_text = ""
+                        try:
+                            if hasattr(chunk, "has_text") and chunk.has_text:
+                                chunk_text = chunk.text
+                            elif hasattr(chunk, "text"):
+                                try:
+                                    chunk_text = chunk.text
+                                except ValueError:
+                                    continue
+                        except Exception as e:
+                            logger.debug(f"获取chunk.text失败: {e}")
+                            continue
+                        
+                        if chunk_text:
+                            full_text = chunk_text
+                            
+                            # 尝试从流式JSON中提取summary部分
+                            try:
+                                summary_start = full_text.find('"summary"')
+                                if summary_start >= 0:
+                                    value_start = full_text.find('"', summary_start + len('"summary"'))
+                                    if value_start >= 0:
+                                        value_start += 1
+                                        value_end = value_start
+                                        while value_end < len(full_text):
+                                            if full_text[value_end] == '"' and full_text[value_end - 1] != '\\':
+                                                break
+                                            value_end += 1
+                                        
+                                        if value_end > value_start:
+                                            current_summary = full_text[value_start:value_end]
+                                            # 输出完整的summary内容（逐渐增长）
+                                            if len(current_summary) > len(previous_summary):
+                                                previous_summary = current_summary
+                                                
+                                                if text_output:
+                                                    yield current_summary
+                                                else:
+                                                    yield ModelOutput.build(
+                                                        text=current_summary,
+                                                        error_code=0,
+                                                        finish_reason="continue"
+                                                    )
+                            except Exception as parse_err:
+                                logger.debug(f"解析summary流式输出失败: {parse_err}")
+                                continue
+                
+                # 流式输出完成后，解析完整JSON并返回结果
+                if full_text:
                     try:
                         # 提取JSON部分
-                        json_str = output_text
+                        json_str = full_text
                         if "```json" in json_str.lower():
                             start_idx = json_str.lower().find("```json")
                             if start_idx >= 0:
@@ -1422,25 +1689,25 @@ Please output the JSON directly, without any other text:"""  # noqa: E501
                         suggested_questions = result.get("suggested_questions", [])
                         
                         if not summary_text:
-                            # 如果没有summary，使用原始输出
-                            summary_text = output_text
+                            summary_text = full_text
                         
-                        return {
+                        yield {
                             "summary": summary_text,
                             "suggested_questions": suggested_questions[:9] if isinstance(suggested_questions, list) else [],
                         }
+                        return
                     except json.JSONDecodeError as e:
                         logger.warning(f"解析总结JSON失败: {e}，使用原始文本")
-                        # 如果解析失败，返回原始文本作为summary
-                        return {
-                            "summary": output_text,
+                        yield {
+                            "summary": full_text,
                             "suggested_questions": [],
                         }
+                        return
             else:
                 logger.warning("llm_client未初始化，无法生成总结")
 
-            return {"summary": "", "suggested_questions": []}
+            yield {"summary": "", "suggested_questions": []}
 
         except Exception as e:
             logger.warning(f"生成结果总结失败: {e}", exc_info=True)
-            return {"summary": "", "suggested_questions": []}
+            yield {"summary": "", "suggested_questions": []}

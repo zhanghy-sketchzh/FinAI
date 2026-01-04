@@ -6,14 +6,7 @@ Query改写Agent - 参考format_sql/backend/agents/query_rewrite_assistant.py
 
 import json
 import logging
-from typing import Dict, List
-
-from tenacity import (
-    retry,
-    retry_if_exception_type,
-    stop_after_attempt,
-    wait_exponential,
-)
+from typing import AsyncIterator, Dict, List, Union
 
 logger = logging.getLogger(__name__)
 
@@ -75,34 +68,46 @@ class QueryRewriteAgent:
         self.llm_client = llm_client
         self.model_name = model_name
 
-    def rewrite_query(
+    async def rewrite_query_stream(
         self,
         user_query: str,
         table_schema_json: str,
         table_description: str,
         chat_history: list = None,
-    ) -> Dict[str, any]:
+    ) -> AsyncIterator[Union[str, Dict]]:
         """
-        改写用户query
-
-        优先使用LLM改写（带重试机制），如果LLM不可用或重试3次后仍失败则使用规则改写
+        流式改写用户query
+        
+        先流式输出LLM的原始输出（文本和JSON），然后输出解析后的结果
+        
+        Yields:
+            str: 流式输出的原始文本chunk
+            Dict: 最终解析后的改写结果（当流式输出完成时）
         """
-        logger.info(f"Query改写 - 原始问题: {user_query}")
+        logger.info(f"Query改写（流式） - 原始问题: {user_query}")
 
         # 尝试使用LLM改写
         if self.llm_client:
             try:
-                logger.info("尝试使用LLM进行Query改写（带重试机制，最多3次）...")
-                result = self._llm_based_rewrite(
+                logger.info("尝试使用LLM进行Query改写（流式）...")
+                full_text = ""
+                async for chunk in self._llm_based_rewrite_stream(
                     user_query,
                     table_schema_json,
                     table_description,
                     chat_history=chat_history,
-                )
-                logger.info(f"✅ LLM改写成功 - 改写结果: {result['rewritten_query']}")
-                return result
+                ):
+                    if isinstance(chunk, str):
+                        # 流式输出原始文本chunk
+                        full_text = chunk
+                        yield chunk
+                    elif isinstance(chunk, dict):
+                        # 返回最终解析结果
+                        logger.info(f"✅ LLM改写成功（流式） - 改写结果: {chunk.get('rewritten_query', '')}")
+                        yield chunk
+                        return
             except JSONParseError as e:
-                logger.error(f"❌ LLM改写失败（JSON解析错误，已重试3次）: {e}")
+                logger.error(f"❌ LLM改写失败（JSON解析错误）: {e}")
                 logger.warning("⚠️ 使用规则改写作为fallback")
             except Exception as e:
                 logger.warning(f"⚠️ LLM改写失败: {e}，使用规则改写作为fallback")
@@ -112,8 +117,7 @@ class QueryRewriteAgent:
         # Fallback: 基于规则的简单改写
         result = self._rule_based_rewrite(user_query, table_schema_json)
         logger.info(f"规则改写 - 改写结果: {result['rewritten_query']}")
-
-        return result
+        yield result
 
     def _rule_based_rewrite(self, user_query: str, table_schema_json: str) -> Dict:
         """
@@ -371,6 +375,7 @@ class QueryRewriteAgent:
     "建议1：具体的分析步骤或注意事项",
     "建议2：...",
     "建议3：..."
+    ...
   ],
   "analysis_logic": "分析逻辑的详细说明，包括：1) 需要筛选哪些数据 2) 按什么维度分组 3) 计算哪些指标 4) 如何排序或对比",
   "domain_knowledge": {{
@@ -379,42 +384,6 @@ class QueryRewriteAgent:
   }}
 }}
 
-=== 示例 ===
-**用户问题**：分析一下各部门的薪酬情况
-
-**输出示例**：
-{{
-  "rewritten_query": "分析各部门的薪酬情况，包括各部门的平均月薪、平均奖金发放金额、奖金与月薪的比例关系，以及各部门员工的职级分布和绩效表现情况。",
-  "relevant_columns": [
-    {{
-      "column_name": "基本信息(BasicInfo)-部门",
-      "usage": "分组维度，用于按部门统计薪酬情况"
-    }},
-    {{
-      "column_name": "基本信息(BasicInfo)-目前月薪",
-      "usage": "聚合指标，用于计算各部门平均月薪"
-    }},
-    {{
-      "column_name": "本次-下发(CNY)",
-      "usage": "聚合指标，用于计算各部门平均奖金发放金额"
-    }},
-    {{
-      "column_name": "基本信息(BasicInfo)-专业职级",
-      "usage": "分组维度，用于分析各部门职级分布"
-    }},
-    {{
-      "column_name": "基本信息(BasicInfo)-2024绩效H1/H2",
-      "usage": "分组维度，用于分析各部门绩效表现"
-    }}
-  ],
-  "analysis_suggestions": [
-    "建议1：以部门为维度，计算每个部门的平均月薪和平均奖金下发金额，并计算奖金与月薪的比例，从而评估各部门薪酬水平和激励力度。",
-    "建议2：进一步按职级和绩效维度细分部门数据，分析不同职级和绩效水平在各部门的分布情况，识别高绩效高薪酬的群体。",
-    "建议3：可以结合组织全称或部门下一级组织字段，进行更细粒度的组织结构薪酬分析，识别不同子组织的薪酬差异。"
-  ],
-  "analysis_logic": "1) 筛选数据：无需特殊筛选，使用全部员工数据进行分析；2) 分组维度：以'基本信息(BasicInfo)-部门'为分组维度；3) 聚合指标：计算'基本信息(BasicInfo)-目前月薪'的均值、'本次-下发(CNY)'的均值，以及两者比值；4) 排序与对比：按平均奖金发放金额或平均月薪进行排序，便于识别薪酬水平较高的部门。",
-  "domain_knowledge": null
-}}
 
 **关于 domain_knowledge 的说明**：
 - 只有当用户明确纠正、补充或说明了某个字段的使用方法时才需要填写
@@ -464,6 +433,7 @@ Please strictly follow the following JSON format:
     "Suggestion 1: Specific analysis steps or considerations",
     "Suggestion 2: ...",
     "Suggestion 3: ..."
+    ...
   ],
   "analysis_logic": "Detailed explanation of analysis logic, including: 1) Which data to filter 2) What dimension to group by 3) Which indicators to calculate 4) How to sort or compare",
   "domain_knowledge": {{
@@ -472,42 +442,7 @@ Please strictly follow the following JSON format:
   }}
 }}
 
-=== Example (English) ===
-**User Question**: Analyze salary by department
 
-**Output Example**:
-{{
-  "rewritten_query": "Analyze the salary situation of each department, including the average monthly salary, average bonus amount, the ratio between bonus and monthly salary, as well as the job level distribution and performance of employees in each department.",
-  "relevant_columns": [
-    {{
-      "column_name": "BasicInfo-Department",
-      "usage": "Grouping dimension for statistical analysis by department"
-    }},
-    {{
-      "column_name": "BasicInfo-CurrentMonthlySalary",
-      "usage": "Aggregation indicator for calculating average monthly salary by department"
-    }},
-    {{
-      "column_name": "Current-BonusAmount(CNY)",
-      "usage": "Aggregation indicator for calculating average bonus amount by department"
-    }},
-    {{
-      "column_name": "BasicInfo-ProfessionalLevel",
-      "usage": "Grouping dimension for analyzing job level distribution by department"
-    }},
-    {{
-      "column_name": "BasicInfo-2024PerformanceH1/H2",
-      "usage": "Grouping dimension for analyzing performance by department"
-    }}
-  ],
-  "analysis_suggestions": [
-    "Suggestion 1: Group by department, calculate the average monthly salary and average bonus amount for each department, and calculate the ratio between bonus and monthly salary to evaluate the salary level and incentive intensity of each department.",
-    "Suggestion 2: Further segment department data by job level and performance dimensions to analyze the distribution of different job levels and performance levels in each department, identifying high-performance and high-salary groups.",
-    "Suggestion 3: Combine with organization full name or department sub-organization fields for more granular organizational structure salary analysis to identify salary differences between different sub-organizations."
-  ],
-  "analysis_logic": "1) Data filtering: No special filtering needed, use all employee data for analysis; 2) Grouping dimension: Group by 'BasicInfo-Department'; 3) Aggregation indicators: Calculate the mean of 'BasicInfo-CurrentMonthlySalary', the mean of 'Current-BonusAmount(CNY)', and their ratio; 4) Sorting and comparison: Sort by average bonus amount or average monthly salary to identify departments with higher salary levels.",
-  "domain_knowledge": null
-}}
 
 **About domain_knowledge**:
 - Only fill in when the user explicitly corrects, supplements, or explains the usage method of a field
@@ -524,31 +459,20 @@ Now please combine the historical context and the user's current question, analy
 """
         return prompt
 
-    @retry(
-        retry=retry_if_exception_type(JSONParseError),
-        stop=stop_after_attempt(3),
-        wait=wait_exponential(multiplier=1, min=1, max=4),
-        reraise=True,
-        before_sleep=lambda retry_state: logger.warning(
-            f"🔄 JSON解析失败，第 {retry_state.attempt_number} 次重试..."
-        ),
-    )
-    def _llm_based_rewrite(
+    async def _llm_based_rewrite_stream(
         self,
         user_query: str,
         table_schema_json: str,
         table_description: str,
         chat_history: list = None,
-    ) -> Dict:
+    ) -> AsyncIterator[Union[str, Dict]]:
         """
-        使用LLM进行Query改写（带重试机制）
-
-        如果JSON解析失败，会自动重试最多3次：
-        - 第1次重试：等待1秒
-        - 第2次重试：等待2秒
-        - 第3次重试：等待4秒
+        使用LLM进行流式Query改写
+        
+        Yields:
+            str: 流式输出的原始文本chunk（累积的完整文本）
+            Dict: 最终解析后的改写结果
         """
-        import asyncio
         import inspect
 
         from dbgpt.core import (
@@ -562,13 +486,14 @@ Now please combine the historical context and the user's current question, analy
         prompt = self._build_rewrite_prompt(
             user_query, table_schema_json, table_description, chat_history=chat_history
         )
-        print(f"🔍 query_rewrite_agent prompt: {prompt}")
-        # 调用LLM（非流式）
+        logger.debug(f"🔍 query_rewrite_agent prompt: {prompt[:200]}...")
+        
+        # 调用LLM（流式）
         request_params = {
             "messages": [ModelMessage(role=ModelMessageRoleType.HUMAN, content=prompt)],
             "temperature": 0.1,
             "max_new_tokens": 2000,
-            "context": ModelRequestContext(stream=False),
+            "context": ModelRequestContext(stream=True),
         }
 
         # 如果有model_name，添加到请求中
@@ -577,60 +502,61 @@ Now please combine the historical context and the user's current question, analy
 
         request = ModelRequest(**request_params)
 
-        # 获取响应
+        # 获取流式响应
         stream_response = self.llm_client.generate_stream(request)
 
         full_text = ""
         if inspect.isasyncgen(stream_response):
-
-            async def collect_async():
-                text = ""
-                async for chunk in stream_response:
-                    # 安全地获取文本内容，避免 "The content type is not text" 错误
-                    try:
-                        if hasattr(chunk, "has_text") and chunk.has_text:
-                            text = chunk.text
-                        elif hasattr(chunk, "text"):
-                            # 尝试获取 text，如果失败则跳过
-                            try:
-                                text = chunk.text
-                            except ValueError:
-                                # 可能只有 thinking 内容，继续等待 text 内容
-                                pass
-                    except Exception as e:
-                        logger.debug(f"获取chunk.text失败: {e}")
-                        pass
-                return text
-
-            loop = asyncio.new_event_loop()
-            asyncio.set_event_loop(loop)
-            try:
-                full_text = loop.run_until_complete(collect_async())
-            finally:
-                loop.close()
-        elif inspect.isgenerator(stream_response):
-            for chunk in stream_response:
-                # 安全地获取文本内容，避免 "The content type is not text" 错误
+            async for chunk in stream_response:
+                # 安全地获取文本内容
                 try:
+                    chunk_text = ""
                     if hasattr(chunk, "has_text") and chunk.has_text:
-                        full_text = chunk.text
+                        chunk_text = chunk.text
                     elif hasattr(chunk, "text"):
-                        # 尝试获取 text，如果失败则跳过
                         try:
-                            full_text = chunk.text
+                            chunk_text = chunk.text
                         except ValueError:
                             # 可能只有 thinking 内容，继续等待 text 内容
-                            pass
+                            continue
+                    
+                    if chunk_text:
+                        full_text = chunk_text
+                        # 流式输出累积的完整文本
+                        yield full_text
                 except Exception as e:
                     logger.debug(f"获取chunk.text失败: {e}")
-                    pass
+                    continue
+        elif inspect.isgenerator(stream_response):
+            for chunk in stream_response:
+                try:
+                    chunk_text = ""
+                    if hasattr(chunk, "has_text") and chunk.has_text:
+                        chunk_text = chunk.text
+                    elif hasattr(chunk, "text"):
+                        try:
+                            chunk_text = chunk.text
+                        except ValueError:
+                            continue
+                    
+                    if chunk_text:
+                        full_text = chunk_text
+                        # 流式输出累积的完整文本
+                        yield full_text
+                except Exception as e:
+                    logger.debug(f"获取chunk.text失败: {e}")
+                    continue
         else:
             raise Exception(f"Unexpected response type: {type(stream_response)}")
 
-        # 解析结果
-        result = self._parse_rewrite_result(full_text, user_query)
-
-        return result
+        # 流式输出完成后，解析结果并返回
+        if full_text:
+            try:
+                result = self._parse_rewrite_result(full_text, user_query)
+                yield result
+            except JSONParseError as e:
+                logger.error(f"JSON解析失败: {e}")
+                raise
 
     def _parse_rewrite_result(self, llm_output: str, original_query: str) -> Dict:
         """
