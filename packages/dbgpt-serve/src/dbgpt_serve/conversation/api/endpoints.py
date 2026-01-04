@@ -332,16 +332,30 @@ async def clear_all_caches():
     """
     try:
         # 查找 clear_excel_cache.py 脚本
-        project_root = Path(__file__).parent
-        while project_root.name != "FinAI" and project_root.parent != project_root:
+        current_file = Path(__file__).resolve()
+        project_root = current_file.parent
+        
+        # 方法1: 向上查找名为 "FinAI" 的目录
+        max_depth = 10  # 防止无限循环
+        depth = 0
+        while project_root.name != "FinAI" and project_root.parent != project_root and depth < max_depth:
             project_root = project_root.parent
+            depth += 1
 
-        if project_root.name != "FinAI":
-            return Result.failed(err_code="E0001", msg="无法找到项目根目录")
+        # 方法2: 如果方法1失败，查找包含 clear_excel_cache.py 的目录
+        if project_root.name != "FinAI" or not (project_root / "clear_excel_cache.py").exists():
+            project_root = current_file.parent
+            depth = 0
+            while not (project_root / "clear_excel_cache.py").exists() and project_root.parent != project_root and depth < max_depth:
+                project_root = project_root.parent
+                depth += 1
 
         script_path = project_root / "clear_excel_cache.py"
         if not script_path.exists():
-            return Result.failed(err_code="E0002", msg=f"清除缓存脚本不存在: {script_path}")
+            return Result.failed(
+                err_code="E0002", 
+                msg=f"清除缓存脚本不存在。当前文件: {current_file}, 项目根目录: {project_root}, 脚本路径: {script_path}"
+            )
 
         # 执行清除缓存脚本
         result = subprocess.run(
