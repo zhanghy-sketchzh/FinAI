@@ -1705,10 +1705,7 @@ class ExcelAutoRegisterService:
 请生成一个简化的JSON格式，包含以下信息：
 
 1. **table_description**: 表的整体描述，说明这是什么数据，适合做什么分析
-2. **columns**: 每个字段的业务理解信息（只需要以下字段）：
-   - column_name: 字段名（必须使用完整的字段名，不能删减）
-   - description: 字段的业务含义和用途描述
-3. **suggested_questions**: 生成9个推荐问题，帮助用户快速了解数据
+2. **suggested_questions**: 生成9个推荐问题，帮助用户快速了解数据
    - **suggested_questions_zh**: 中文版本的9个推荐问题
    - **suggested_questions_en**: 英文版本的9个推荐问题（与中文问题对应，内容相同但语言不同）
    - **问题要求**：
@@ -1721,12 +1718,6 @@ class ExcelAutoRegisterService:
 ```json
 {{
   "table_description": "表的整体描述...",
-  "columns": [
-    {{
-      "column_name": "完整的字段名",
-      "description": "详细的业务含义描述"
-    }}
-  ],
   "suggested_questions_zh": [
     "问题1（简单问题，有标准答案）",
     "问题2（简单问题，有标准答案）",
@@ -1753,9 +1744,7 @@ class ExcelAutoRegisterService:
 ```
 
 注意：
-1. 深入理解字段的业务含义，不要只是简单重复字段名
-2. column_name必须与数据表中的字段名完全一致
-3. **前6个问题必须是简单的问题，有明确的标准答案**
+1. **前6个问题必须是简单的问题，有明确的标准答案**
 4. **后3个问题必须是开放式问题**，可以引发深入思考和分析
 5. **所有问题必须基于数据表中的实际字段和数据，可以围绕具体的分类值进行分析，不能凭空捏造不存在的字段或数据**
 6. 中文推荐问题应该用自然的中文表达，英文推荐问题应该用自然的英文表达，简洁明了，可以直接用于数据分析
@@ -1792,24 +1781,16 @@ class ExcelAutoRegisterService:
             logger.error(f"解析简化JSON失败: {e}")
             raise
 
-        # 构建字段名映射
-        llm_map = {
-            col.get("column_name"): col
-            for col in schema.get("columns", [])
-            if col.get("column_name")
-        }
-
         # 构建完整的columns列表
         enriched_columns = []
         for col_name in df.columns:
             col_data = df[col_name]
             dtype = str(col_data.dtype)
-            llm_info = llm_map.get(col_name, {})
 
             col_info = {
                 "column_name": col_name,
                 "data_type": dtype,
-                "description": llm_info.get("description", f"{col_name}字段"),
+                "description": self._generate_column_description(col_name, col_data, dtype),
                 "is_key_field": self._is_potential_key_field(col_name, col_data),
             }
 
@@ -1844,14 +1825,6 @@ class ExcelAutoRegisterService:
                 col_info["unique_values_top20"] = [
                     str(v) for v in top_20_values.index.tolist()
                 ]
-
-                # 合并统计信息到 value_distribution（包含出现次数）
-                top_20_list = [
-                    f"{str(v)}({count}次)" for v, count in top_20_values.items()
-                ]
-                col_info["value_distribution"] = (
-                    f"共{total_unique}个唯一值，出现次数前20: {', '.join(top_20_list)}"
-                )
 
             enriched_columns.append(col_info)
 
@@ -2214,12 +2187,38 @@ class ExcelAutoRegisterService:
 
             if "statistics_summary" in col:
                 lines.append(f"  统计: {col['statistics_summary']}")
-            
-            if "value_distribution" in col:
-                lines.append(f"  值分布: {col['value_distribution']}")
 
         return "\n".join(lines)
 
+    def _generate_column_description(
+        self, col_name: str, col_data: pd.Series, dtype: str
+    ) -> str:
+        """
+        根据规则生成字段描述（简化版）
+        
+        Args:
+            col_name: 字段名
+            col_data: 字段数据
+            dtype: 数据类型
+            
+        Returns:
+            字段描述
+        """
+        # 根据数据类型生成基础描述
+        if dtype in ["int64", "float64", "int32", "float32", "Int64"]:
+            return f"{col_name}（数值类型）"
+        elif "date" in dtype.lower() or "time" in dtype.lower():
+            return f"{col_name}（日期时间类型）"
+        elif dtype in ["object", "category"]:
+            # 对于分类字段，显示唯一值数量
+            unique_count = len(col_data.dropna().unique())
+            if unique_count <= 20:
+                return f"{col_name}（分类字段，{unique_count}个可选值）"
+            else:
+                return f"{col_name}（文本类型）"
+        else:
+            return f"{col_name}（{dtype}类型）"
+    
     def _get_sample_values(self, col_data: pd.Series, n: int = 3) -> list:
         """
         获取列的示例值

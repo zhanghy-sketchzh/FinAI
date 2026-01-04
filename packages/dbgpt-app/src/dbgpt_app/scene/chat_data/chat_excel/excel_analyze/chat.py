@@ -1325,7 +1325,7 @@ Please output a JSON object with the following structure:
 - **First 6 questions**: Simple questions with clear standard answers 
 - **Last 3 questions**: Medium difficulty questions that require some thinking and analysis
 - **IMPORTANT**: All questions MUST be based on actual fields and data in the data table, DO NOT fabricate non-existent fields or data
-- Questions should be based on the current analysis results and conversation context
+- Questions should be based on the current analysis results and conversation context, you can think more broadly, but do not deviate from the topic
 - All questions must be in ENGLISH
 
 Please output the JSON directly, without any other text:"""  # noqa: E501
@@ -1367,7 +1367,7 @@ Please output the JSON directly, without any other text:"""  # noqa: E501
 - **前6个问题**：简单的问题，有明确的标准答案
 - **后3个问题**：中等难度问题，需要一定的思考和分析
 - **重要**：所有问题必须基于数据表中的实际字段和数据，可以围绕具体的分类值进行分析，不能凭空捏造不存在的字段或数据
-- 问题应该基于当前分析结果和对话上下文
+- 问题应该基于当前分析结果和对话上下文，可以适当发散思维，但不要偏离主题
 - 所有问题必须使用**中文**
 
 请直接输出JSON，不要有其他文字："""

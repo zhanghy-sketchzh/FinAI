@@ -47,7 +47,7 @@ function ChartView({ data, type, sql }: { data: Datum[]; type: BackEndChartType;
   };
   const SqlItem = {
     key: 'sql',
-    label: 'SQL',
+    label: 'Code',
     children: <CodePreview language='sql' code={formatSql(sql ?? '', 'mysql') as string} />,
   };
   const DataItem = {
@@ -55,7 +55,7 @@ function ChartView({ data, type, sql }: { data: Datum[]; type: BackEndChartType;
     label: 'Data',
     children: <Table dataSource={data} columns={columns} scroll={{ x: 'auto' }} />,
   };
-  const TabItems: TabsProps['items'] = type === 'response_table' ? [DataItem, SqlItem] : [DataItem, SqlItem, ChartItem];
+  const TabItems: TabsProps['items'] = type === 'response_table' ? [DataItem, SqlItem] : [DataItem, ChartItem, SqlItem];
 
   return <Tabs defaultActiveKey={type === 'response_table' ? 'data' : 'data'} items={TabItems} size='small' />;
 }

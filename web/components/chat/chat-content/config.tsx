@@ -431,7 +431,7 @@ const extraComponents: MarkdownComponent = {
     };
     const SqlItem = {
       key: 'sql',
-      label: 'SQL',
+      label: 'Code',
       children: <CodePreview code={formatSql(returnSqlVal(data?.sql), 'mysql') as string} language={'sql'} />,
     };
     const DataItem = {
@@ -440,7 +440,7 @@ const extraComponents: MarkdownComponent = {
       children: <Table dataSource={data?.data} columns={columns} scroll={{ x: true }} virtual={true} />,
     };
     const TabItems: TabsProps['items'] =
-      data?.type === 'response_table' ? [DataItem, SqlItem] : [DataItem, SqlItem, ChartItem];
+      data?.type === 'response_table' ? [DataItem, SqlItem] : [DataItem, ChartItem, SqlItem];
 
     return (
       <div>
