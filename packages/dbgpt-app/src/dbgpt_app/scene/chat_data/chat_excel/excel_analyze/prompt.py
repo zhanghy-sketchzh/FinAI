@@ -36,6 +36,10 @@ _DUCKDB_RULES_ZH = """
 
 **严禁使用未加双引号的数字开头字段名！**
 
+**【极其重要】表名必须完全匹配：**
+- **表名必须使用约束条件中指定的完整表名，不能简化、缩写或修改**
+- **在所有SQL语句的FROM子句中，必须使用约束条件中明确指定的表名**
+
 **【极其重要】列名必须完全匹配：**
 - 必须使用表结构中提供的**完整列名**，包括所有括号、连字符等特殊字符
 - 列名必须**逐字符精确匹配**表结构中的定义
@@ -43,10 +47,7 @@ _DUCKDB_RULES_ZH = """
 
 ### 【字符串匹配精确规则】：
 - **必须精确匹配**：在WHERE子句中使用字符串条件时，必须完全匹配数据中的实际值
-- **禁止字符替换**：不能随意替换字符，例如：
-  * "和"不能替换为"与"（如"风险管理和内部控制部门"不能写成"风险管理与内部控制部门"）
-  * "部门"不能替换为"部"
-  * 不能省略或添加任何字符
+- **禁止字符替换**：不能随意替换字符
 - **建议做法**：如果不确定精确值，可以使用LIKE或IN操作符，但必须基于实际数据中的值
 
 ### 【GROUP BY 关键规则】：
@@ -84,12 +85,13 @@ _DUCKDB_RULES_EN = """
 
 **NEVER use digit-starting field names without double quotes!**
 
+**【CRITICAL】Table Name Must Match Exactly:**
+- **Table name MUST use the complete table name specified in the constraints, cannot be simplified, abbreviated, or modified**
+- **In all SQL FROM clauses, you MUST use the exact table name specified in the constraints**
+
 ### 【String Matching Precision Rules】：
 - **Must match exactly**: When using string conditions in WHERE clause, must exactly match the actual values in the data
-- **No character substitution**: Cannot arbitrarily replace characters, for example:
-  * "和" cannot be replaced with "与" (e.g., "风险管理和内部控制部门" cannot be written as "风险管理与内部控制部门")
-  * "部门" cannot be replaced with "部"
-  * Cannot omit or add any characters
+- **No character substitution**: Cannot arbitrarily replace characters
 - **Recommended approach**: If unsure of exact value, use LIKE or IN operators, but must be based on actual values in the data
 
 ### 【GROUP BY Key Rules】：
@@ -118,7 +120,9 @@ _DUCKDB_RULES_EN = """
 
 # ===== 可复用的约束条件块 =====
 _ANALYSIS_CONSTRAINTS_ZH = """
-表名：{table_name}
+**【必须严格遵守】表名：{table_name}**
+**重要提示：在所有SQL语句的FROM子句中，必须使用上面指定的完整表名，不能简化、缩写或修改！**
+
 列名规则：中文/数字开头/特殊字符必须用双引号;不要使用 UNION / UNION ALL，如需多个结果请分别查询；时间戳处理使用 to_timestamp() 而非直接 CAST；注释行必须单独成行，不要放在 SQL 语句的同一行
 字符串匹配规则：WHERE子句中的字符串条件必须完全匹配数据中的实际值，不能随意替换字符（如"和"不能替换为"与"），建议使用LIKE或IN操作符基于实际数据值
 子查询规则：禁止在 SELECT 列表中使用返回多行的子查询（会导致"More than one row returned"错误），应使用 JOIN 或窗口函数替代
@@ -129,7 +133,9 @@ _ANALYSIS_CONSTRAINTS_ZH = """
 """
 
 _ANALYSIS_CONSTRAINTS_EN = """
-Table: {table_name}
+**【MUST STRICTLY FOLLOW】Table Name: {table_name}**
+**IMPORTANT: In all SQL FROM clauses, you MUST use the complete table name specified above, cannot simplify, abbreviate, or modify it!**
+
 Column rules: Chinese/digit-starting/special chars need double quotes
 String matching rules: String conditions in WHERE clause must exactly match actual values in data, cannot arbitrarily replace characters (e.g., "和" cannot be replaced with "与"), recommend using LIKE or IN operators based on actual data values
 Subquery rules: NEVER use subqueries in SELECT list that return multiple rows (causes "More than one row returned" error), use JOIN or window functions instead
