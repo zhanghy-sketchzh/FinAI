@@ -31,6 +31,14 @@ export const ChatEn = {
   code_preview_run: 'Run',
   code_preview_close: 'Close',
   parsing_data: 'Parsing and understanding data...',
+  data_preview: 'Data Preview',
+  loading_data: 'Loading data...',
+  filter_placeholder: 'Enter filter content',
+  reset: 'Reset',
+  confirm: 'Confirm',
+  rows: 'rows',
+  columns: 'columns',
+  total_records: 'Total {{count}} records',
   // Header
   help_center: 'Help Center',
   // ChatHeader

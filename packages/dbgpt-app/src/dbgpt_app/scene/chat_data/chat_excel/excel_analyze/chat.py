@@ -1011,6 +1011,15 @@ class ChatExcel(BaseChat):
                         rewrite_result = chunk
                         self._query_rewrite_result = rewrite_result
                         
+                        # 检查问题是否与数据表相关
+                        is_relevant = rewrite_result.get("is_relevant", True)
+                        if not is_relevant:
+                            logger.info(f"检测到非数据分析问题，路由到通用对话: {self.current_user_input.last_text}")
+                            # 路由到通用对话agent
+                            async for response in self._handle_general_chat():
+                                yield response
+                            return
+                        
                         # 保存领域知识
                         extracted_knowledge = rewrite_result.get("_extracted_knowledge")
                         if extracted_knowledge:
@@ -1240,6 +1249,104 @@ class ChatExcel(BaseChat):
         else:
             return final_output.text if final_output.has_text else ""
 
+    async def _handle_general_chat(self):
+        """
+        处理通用对话（非数据分析问题）
+        使用LLM进行简单的对话回复
+        """
+        try:
+            detected_language = getattr(self, "_detected_language", "zh")
+            is_english = detected_language == "en"
+            
+            if is_english:
+                system_prompt = """You are a friendly AI assistant. The user is currently in a data analysis session but has asked a general question unrelated to data analysis. Please provide a brief, helpful response and gently remind them that you're here primarily to help with data analysis tasks."""
+            else:
+                system_prompt = """你是一个友好的AI助手。用户当前处于数据分析会话中，但提出了一个与数据分析无关的一般性问题。请提供简短、有帮助的回复，并温和地提醒他们你主要是用来帮助数据分析任务的。"""
+            
+            request = ModelRequest(
+                model=self.llm_model,
+                messages=[
+                    ModelMessage(role=ModelMessageRoleType.SYSTEM, content=system_prompt),
+                    ModelMessage(
+                        role=ModelMessageRoleType.HUMAN,
+                        content=self.current_user_input.last_text
+                    )
+                ],
+                temperature=0.7,
+                max_new_tokens=512,
+                context=ModelRequestContext(stream=True),
+            )
+            
+            if self.llm_client:
+                import inspect
+                
+                stream_response = self.llm_client.generate_stream(request)
+                full_text = ""
+                
+                if inspect.isasyncgen(stream_response):
+                    async for chunk in stream_response:
+                        try:
+                            if hasattr(chunk, "has_text") and chunk.has_text:
+                                chunk_text = chunk.text
+                            elif hasattr(chunk, "text"):
+                                try:
+                                    chunk_text = chunk.text
+                                except ValueError:
+                                    continue
+                            else:
+                                continue
+                            
+                            if chunk_text:
+                                full_text = chunk_text
+                                yield chunk_text
+                        except Exception as e:
+                            logger.debug(f"获取chunk.text失败: {e}")
+                            continue
+                elif inspect.isgenerator(stream_response):
+                    for chunk in stream_response:
+                        try:
+                            if hasattr(chunk, "has_text") and chunk.has_text:
+                                chunk_text = chunk.text
+                            elif hasattr(chunk, "text"):
+                                try:
+                                    chunk_text = chunk.text
+                                except ValueError:
+                                    continue
+                            else:
+                                continue
+                            
+                            if chunk_text:
+                                full_text = chunk_text
+                                yield chunk_text
+                        except Exception as e:
+                            logger.debug(f"获取chunk.text失败: {e}")
+                            continue
+                
+                # 保存对话历史
+                if full_text:
+                    self.current_message.add_ai_message(full_text)
+                    self.current_message.add_view_message(full_text)
+                    await blocking_func_to_async(
+                        self._executor, self.current_message.end_current_round
+                    )
+            else:
+                if is_english:
+                    fallback_msg = "I'm here to help you with data analysis. If you have any questions about the data, feel free to ask!"
+                else:
+                    fallback_msg = "我是数据分析助手，如果您有关于数据的问题，随时可以问我！"
+                yield fallback_msg
+                
+        except Exception as e:
+            logger.error(f"处理通用对话失败: {e}", exc_info=True)
+            detected_language = getattr(self, "_detected_language", "zh")
+            is_english = detected_language == "en"
+            
+            if is_english:
+                error_msg = "I'm here to help with data analysis. Do you have any questions about the data?"
+            else:
+                error_msg = "我主要负责数据分析，您有什么关于数据的问题吗？"
+            yield error_msg
+    
     def _format_query_rewrite_thinking(self, rewrite_result: dict) -> str:
         try:
             if not rewrite_result:

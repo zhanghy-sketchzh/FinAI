@@ -412,6 +412,14 @@ const extraComponents: MarkdownComponent = {
       return numericCount > sampleSize * 0.5;
     };
 
+    // 格式化数字为千分位
+    const formatNumber = (value: any): string => {
+      if (value === null || value === undefined || value === '') return '';
+      const num = Number(value);
+      if (isNaN(num)) return String(value);
+      return num.toLocaleString('zh-CN', { maximumFractionDigits: 2 });
+    };
+
     const columns = data?.data?.[0]
       ? Object.keys(data?.data?.[0])?.map(item => {
           const columnIsNumeric = isNumericColumn(item);
@@ -420,6 +428,12 @@ const extraComponents: MarkdownComponent = {
             dataIndex: item,
             key: item,
             align: columnIsNumeric ? 'right' : 'left',
+            render: (value: any) => {
+              if (columnIsNumeric && isNumeric(value)) {
+                return formatNumber(value);
+              }
+              return value;
+            },
           };
         })
       : [];

@@ -469,6 +469,7 @@ async def file_upload(
                     file_param["row_count"] = register_result.get("row_count")
                     file_param["column_count"] = register_result.get("column_count")
                     file_param["top_10_rows"] = register_result.get("top_10_rows")
+                    file_param["preview_data"] = register_result.get("preview_data")
                     file_param["suggested_questions"] = register_result.get(
                         "suggested_questions"
                     )

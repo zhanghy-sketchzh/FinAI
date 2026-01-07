@@ -280,31 +280,26 @@ const ChatSider: React.FC<{
         </Flex>
 
         {/* 底部设置区域 */}
-        <div className='px-4 py-3 border-t border-dashed border-gray-200 dark:border-gray-700'>
-          <div className='flex items-center justify-between'>
-            {/* 用户头像 */}
-            <UserBar onlyAvatar align='left' />
-            {/* 右侧操作按钮 */}
-            <div className='flex items-center gap-1'>
-              {/* 主题切换 */}
-              <Popover content={t('Theme')}>
-                <div
-                  className='flex items-center justify-center w-8 h-8 rounded-md hover:bg-[#F1F5F9] dark:hover:bg-theme-dark cursor-pointer text-lg'
-                  onClick={handleToggleTheme}
-                >
-                  {mode === 'dark' ? <Icon component={DarkSvg} /> : <Icon component={SunnySvg} />}
-                </div>
-              </Popover>
-              {/* 语言切换 */}
-              <Popover content={t('language')}>
-                <div
-                  className='flex items-center justify-center w-8 h-8 rounded-md hover:bg-[#F1F5F9] dark:hover:bg-theme-dark cursor-pointer text-lg'
-                  onClick={handleChangeLang}
-                >
-                  <GlobalOutlined />
-                </div>
-              </Popover>
-            </div>
+        <div className='px-4 py-2 border-t border-dashed border-gray-200 dark:border-gray-700'>
+          <div className='flex items-center justify-end gap-1'>
+            {/* 主题切换 */}
+            <Popover content={t('Theme')}>
+              <div
+                className='flex items-center justify-center w-8 h-8 rounded-md hover:bg-[#F1F5F9] dark:hover:bg-theme-dark cursor-pointer text-lg'
+                onClick={handleToggleTheme}
+              >
+                {mode === 'dark' ? <Icon component={DarkSvg} /> : <Icon component={SunnySvg} />}
+              </div>
+            </Popover>
+            {/* 语言切换 */}
+            <Popover content={t('language')}>
+              <div
+                className='flex items-center justify-center w-8 h-8 rounded-md hover:bg-[#F1F5F9] dark:hover:bg-theme-dark cursor-pointer text-lg'
+                onClick={handleChangeLang}
+              >
+                <GlobalOutlined />
+              </div>
+            </Popover>
           </div>
         </div>
       </div>

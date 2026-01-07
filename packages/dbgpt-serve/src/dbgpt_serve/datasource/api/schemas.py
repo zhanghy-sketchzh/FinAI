@@ -129,6 +129,9 @@ class ExcelUploadResponse(BaseModel):
     column_count: int = Field(..., description="Number of columns")
     columns_info: list = Field(..., description="Column information")
     summary_prompt: Optional[str] = Field(None, description="Data understanding prompt")
+    preview_data: Optional[Dict[str, Any]] = Field(
+        None, description="Preview data with columns and rows for table display"
+    )
     access_count: Optional[int] = Field(None, description="Access count (for cached)")
     last_accessed: Optional[str] = Field(
         None, description="Last access time (for cached)"
@@ -147,6 +150,9 @@ class ExcelInfoResponse(BaseModel):
     column_count: int = Field(..., description="Column count")
     columns_info: list = Field(..., description="Columns information")
     summary_prompt: Optional[str] = Field(None, description="Summary prompt")
+    preview_data: Optional[Dict[str, Any]] = Field(
+        None, description="Preview data with columns and rows for table display"
+    )
     created_at: str = Field(..., description="Created time")
     last_accessed: str = Field(..., description="Last accessed time")
     access_count: int = Field(..., description="Access count")

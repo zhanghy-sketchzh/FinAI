@@ -1,5 +1,7 @@
 import { ChatContext } from '@/app/chat-context';
 import { apiInterceptors, getAppInfo, getChatHistory, getDialogueList, newDialogue } from '@/client/api';
+import ExcelDataTableContainer from '@/components/chat/excel-data-table-container';
+import ResizablePanels from '@/components/chat/resizable-panels';
 import useChat from '@/hooks/use-chat';
 import ChatContentContainer from '@/new-components/chat/ChatContentContainer';
 import ChatInputPanel from '@/new-components/chat/input/ChatInputPanel';
@@ -21,6 +23,14 @@ const ChatContainer = dynamic(() => import('@/components/chat/chat-container'), 
 
 const { Content } = Layout;
 
+// Excel预览数据类型
+interface ExcelPreviewData {
+  columns: Array<{ field: string; type: string; headerName: string }>;
+  rows: Array<Record<string, any>>;
+  total: number;
+  file_name?: string;
+}
+
 interface ChatContentProps {
   history: ChatHistoryResponse; // 会话记录列表
   replyLoading: boolean; // 对话回复loading
@@ -34,6 +44,10 @@ interface ChatContentProps {
   maxNewTokensValue: any;
   resourceValue: any;
   modelValue: string;
+  excelPreviewData?: ExcelPreviewData; // Excel预览数据
+  excelPreviewVisible: boolean; // Excel预览面板是否展开
+  setExcelPreviewData: React.Dispatch<React.SetStateAction<ExcelPreviewData | undefined>>;
+  setExcelPreviewVisible: React.Dispatch<React.SetStateAction<boolean>>;
   setModelValue: React.Dispatch<React.SetStateAction<string>>;
   setTemperatureValue: React.Dispatch<React.SetStateAction<any>>;
   setMaxNewTokensValue: React.Dispatch<React.SetStateAction<any>>;
@@ -61,6 +75,10 @@ export const ChatContentContext = createContext<ChatContentProps>({
   maxNewTokensValue: 1024,
   resourceValue: {},
   modelValue: '',
+  excelPreviewData: undefined,
+  excelPreviewVisible: false,
+  setExcelPreviewData: () => {},
+  setExcelPreviewVisible: () => {},
   setModelValue: () => {},
   setResourceValue: () => {},
   setTemperatureValue: () => {},
@@ -112,6 +130,8 @@ const Chat: React.FC = () => {
   const [maxNewTokensValue, setMaxNewTokensValue] = useState();
   const [resourceValue, setResourceValue] = useState<any>();
   const [modelValue, setModelValue] = useState<string>('');
+  const [excelPreviewData, setExcelPreviewData] = useState<ExcelPreviewData | undefined>();
+  const [excelPreviewVisible, setExcelPreviewVisible] = useState<boolean>(false);
 
   // 自动创建 Chat Excel 会话
   useEffect(() => {
@@ -148,17 +168,19 @@ const Chat: React.FC = () => {
     );
   }, [appInfo, dbName, knowledgeId, model]);
 
-  // 当 chatId 变化时，重置所有相关状态（新会话没有上传文件和历史记录）
+  // 当 chatId 变化时，重置相关状态
   useEffect(() => {
     if (chatId) {
-      // 重置 resourceValue，让新会话可以重新上传文件
-      setResourceValue(null);
-      // 重置历史记录，确保新会话开始时是空的
+      // 重置历史记录和 order
       setHistory([]);
-      // 重置 order
       order.current = 1;
+      // 重置 resourceValue 和 excelPreviewData（会在后续的 useEffect 中从 currentDialogue 恢复）
+      setResourceValue(null);
+      setExcelPreviewData(undefined);
+      // 重置Excel预览可见状态（默认关闭）
+      setExcelPreviewVisible(false);
     }
-  }, [chatId, setResourceValue, setHistory]);
+  }, [chatId, setResourceValue, setHistory, setExcelPreviewData]);
 
   useEffect(() => {
     // 仅初始化执行，防止dashboard页面无法切换状态
@@ -205,6 +227,55 @@ const Chat: React.FC = () => {
     const [, list] = dialogueList;
     return list?.find(item => item.conv_uid === chatId) || ({} as IChatDialogueSchema);
   }, [chatId, dialogueList]);
+
+  // 当 currentDialogue 更新后，立即恢复 resourceValue 和 excelPreviewData
+  useEffect(() => {
+    if (
+      currentDialogue?.select_param &&
+      currentDialogue?.conv_uid === chatId &&
+      scene === 'chat_excel' &&
+      !resourceValue
+    ) {
+      console.log('🔄 开始恢复历史会话数据...');
+      try {
+        const selectParam =
+          typeof currentDialogue.select_param === 'string'
+            ? JSON.parse(currentDialogue.select_param)
+            : currentDialogue.select_param;
+
+        console.log('📦 select_param:', selectParam);
+
+        // 恢复 resourceValue
+        if (selectParam && Object.keys(selectParam).length > 0) {
+          console.log('✅ 恢复 resourceValue');
+          setResourceValue(selectParam);
+        }
+
+        // 恢复 excelPreviewData（如果存在）
+        if (selectParam?.preview_data) {
+          console.log('✅ 恢复 excelPreviewData，数据行数:', selectParam.preview_data.rows?.length);
+          // 添加文件名到预览数据
+          const previewDataWithFileName = {
+            ...selectParam.preview_data,
+            file_name: selectParam.file_name || selectParam.original_filename,
+          };
+          setExcelPreviewData(previewDataWithFileName);
+        } else {
+          console.log('⚠️ select_param 中没有 preview_data');
+        }
+      } catch (error) {
+        console.error('❌ 恢复数据失败:', error);
+      }
+    }
+  }, [
+    currentDialogue?.select_param,
+    currentDialogue?.conv_uid,
+    chatId,
+    scene,
+    resourceValue,
+    setResourceValue,
+    setExcelPreviewData,
+  ]);
 
   useEffect(() => {
     const initMessage = getInitMessage();
@@ -388,6 +459,41 @@ const Chat: React.FC = () => {
   const contentRender = () => {
     if (scene === 'chat_dashboard') {
       return isContract ? <DbEditor /> : <ChatContainer />;
+    } else if (scene === 'chat_excel') {
+      // Chat Excel: 左右分栏布局，左侧展示数据表格，右侧展示对话
+      return isChatDefault ? (
+        <Content className='flex items-center justify-center h-full'>
+          <Spin size='large' />
+        </Content>
+      ) : (
+        <Spin spinning={historyLoading} className='w-full h-full m-auto'>
+          <Content className='h-screen'>
+            {excelPreviewVisible && excelPreviewData ? (
+              <ResizablePanels
+                leftPanel={
+                  <div className='h-full overflow-hidden'>
+                    <ExcelDataTableContainer />
+                  </div>
+                }
+                rightPanel={
+                  <div className='h-full flex flex-col'>
+                    <ChatContentContainer ref={scrollRef} className='flex-1' />
+                    <ChatInputPanel ref={chatInputRef} ctrl={ctrl} />
+                  </div>
+                }
+                defaultLeftWidth={60}
+                minLeftWidth={30}
+                maxLeftWidth={80}
+              />
+            ) : (
+              <div className='h-full flex flex-col'>
+                <ChatContentContainer ref={scrollRef} className='flex-1' />
+                <ChatInputPanel ref={chatInputRef} ctrl={ctrl} />
+              </div>
+            )}
+          </Content>
+        </Spin>
+      );
     } else {
       return isChatDefault ? (
         <Content className='flex items-center justify-center h-full'>
@@ -420,6 +526,10 @@ const Chat: React.FC = () => {
         maxNewTokensValue,
         resourceValue,
         modelValue,
+        excelPreviewData,
+        excelPreviewVisible,
+        setExcelPreviewData,
+        setExcelPreviewVisible,
         setModelValue,
         setResourceValue,
         setTemperatureValue,

@@ -1292,6 +1292,85 @@ class ExcelAutoRegisterService:
 
         return merged_df
 
+    def get_table_preview_data(
+        self, db_path: str, table_name: str, limit: int = None, file_name: str = None
+    ) -> Dict:
+        """
+        从数据库中获取表格预览数据
+        
+        Args:
+            db_path: 数据库路径
+            table_name: 表名
+            limit: 获取的行数限制，None表示不限制
+            file_name: 文件名（可选），用于在前端显示
+            
+        Returns:
+            包含列定义和数据行的字典
+        """
+        import duckdb
+        
+        try:
+            conn = duckdb.connect(db_path, read_only=True)
+            
+            # 获取列定义
+            columns_result = conn.execute(f'DESCRIBE "{table_name}"').fetchall()
+            columns = [
+                {
+                    "field": col[0],
+                    "type": col[1],
+                    "headerName": col[0],
+                }
+                for col in columns_result
+            ]
+            
+            # 获取总行数
+            total_count = conn.execute(
+                f'SELECT COUNT(*) FROM "{table_name}"'
+            ).fetchone()[0]
+            
+            # 获取数据行（不限制或按指定limit）
+            if limit is None:
+                rows_result = conn.execute(
+                    f'SELECT * FROM "{table_name}"'
+                ).fetchall()
+            else:
+                rows_result = conn.execute(
+                    f'SELECT * FROM "{table_name}" LIMIT {limit}'
+                ).fetchall()
+            
+            # 转换为字典列表
+            rows = []
+            for idx, row in enumerate(rows_result):
+                row_dict = {"id": idx}  # 为每行添加唯一ID
+                for col_idx, col_info in enumerate(columns):
+                    value = row[col_idx]
+                    # 转换为可JSON序列化的格式
+                    row_dict[col_info["field"]] = self._convert_to_json_serializable(value)
+                rows.append(row_dict)
+            
+            conn.close()
+            
+            result = {
+                "columns": columns,
+                "rows": rows,
+                "total": total_count,
+            }
+            
+            # 如果提供了文件名，添加到结果中
+            if file_name:
+                result["file_name"] = file_name
+            
+            return result
+            
+        except Exception as e:
+            logger.error(f"获取表格预览数据失败: {e}")
+            return {
+                "columns": [],
+                "rows": [],
+                "total": 0,
+                "error": str(e),
+            }
+
     def process_excel(
         self,
         excel_file_path: str,
@@ -1302,6 +1381,7 @@ class ExcelAutoRegisterService:
         sheet_names: List[str] = None,
         merge_sheets: bool = False,
         source_column_name: str = "数据类型",
+        preview_limit: int = None,
     ) -> Dict:
         """处理Excel文件，自动注册到数据源
 
@@ -1314,6 +1394,7 @@ class ExcelAutoRegisterService:
             sheet_names: 要处理的sheet名称列表，如果为None则处理所有sheet
             merge_sheets: 是否合并多个sheet（如果为True，将多个sheet合并为一张表）
             source_column_name: 合并时添加的来源列名，默认为"数据类型"
+            preview_limit: 预览数据行数限制，None表示不限制
         """
         if original_filename is None:
             original_filename = Path(excel_file_path).name
@@ -1354,16 +1435,16 @@ class ExcelAutoRegisterService:
                 try:
                     import duckdb
 
-                    conn = duckdb.connect(cached_info["db_path"])
+                    conn = duckdb.connect(cached_info["db_path"], read_only=True)
                     # 获取列名
                     columns_result = conn.execute(
-                        f"DESCRIBE {cached_info['table_name']}"
+                        f'DESCRIBE "{cached_info["table_name"]}"'
                     ).fetchall()
                     columns = [col[0] for col in columns_result]
 
                     # 获取前10行数据
                     rows = conn.execute(
-                        f"SELECT * FROM {cached_info['table_name']} LIMIT 10"
+                        f'SELECT * FROM "{cached_info["table_name"]}" LIMIT 10'
                     ).fetchall()
                     conn.close()
 
@@ -1373,6 +1454,14 @@ class ExcelAutoRegisterService:
                 except Exception as e:
                     logger.warning(f"从数据库读取top_10_rows失败: {e}，将返回空列表")
                     top_10_rows = []
+
+                # 获取预览数据
+                preview_data = self.get_table_preview_data(
+                    cached_info["db_path"],
+                    cached_info["table_name"],
+                    preview_limit,
+                    original_filename
+                )
 
                 return {
                     "status": "cached",
@@ -1387,6 +1476,7 @@ class ExcelAutoRegisterService:
                     "summary_prompt": cached_info["summary_prompt"],
                     "data_schema_json": cached_schema_json,
                     "top_10_rows": top_10_rows,
+                    "preview_data": preview_data,
                     "access_count": cached_info["access_count"],
                     "last_accessed": cached_info["last_accessed"],
                     "conv_uid": conv_uid,
@@ -1549,6 +1639,9 @@ class ExcelAutoRegisterService:
         top_10_rows_raw = df.head(10).values.tolist()
         top_10_rows = self._convert_to_json_serializable(top_10_rows_raw)
 
+        # 获取预览数据
+        preview_data = self.get_table_preview_data(db_path, table_name, preview_limit, original_filename)
+
         return {
             "status": "imported",
             "message": "成功导入新数据",
@@ -1562,6 +1655,7 @@ class ExcelAutoRegisterService:
             "summary_prompt": summary_prompt,
             "data_schema_json": schema_understanding_json,
             "top_10_rows": top_10_rows,
+            "preview_data": preview_data,
             "conv_uid": conv_uid,
         }
 

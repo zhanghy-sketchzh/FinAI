@@ -18,7 +18,7 @@ const Resource: React.FC<{
   setLoading: React.Dispatch<React.SetStateAction<boolean>>;
   fileName: string;
 }> = ({ fileList, setFileList, setLoading, fileName }) => {
-  const { setResourceValue, appInfo, refreshHistory, refreshDialogList, modelValue, resourceValue } =
+  const { setResourceValue, appInfo, refreshHistory, refreshDialogList, modelValue, resourceValue, setExcelPreviewData } =
     useContext(ChatContentContext);
 
   const { temperatureValue, maxNewTokensValue } = useContext(ChatContentContext);
@@ -109,10 +109,15 @@ const Resource: React.FC<{
     });
     if (res) {
       setResourceValue(res);
+      // 如果返回了preview_data，设置Excel预览数据
+      if (res.preview_data) {
+        console.log('✅ 设置Excel预览数据:', res.preview_data);
+        setExcelPreviewData?.(res.preview_data);
+      }
       await refreshHistory();
       await refreshDialogList();
     }
-  }, [chatId, fileList, modelValue, refreshDialogList, refreshHistory, scene, setLoading, setResourceValue]);
+  }, [chatId, fileList, modelValue, refreshDialogList, refreshHistory, scene, setLoading, setResourceValue, setExcelPreviewData, temperatureValue, maxNewTokensValue]);
 
   if (!paramKey.includes('resource')) {
     return (

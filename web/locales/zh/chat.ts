@@ -39,6 +39,14 @@ export const ChatZh: Resources['translation'] = {
   code_preview_run: '运行',
   code_preview_close: '关闭',
   parsing_data: '正在解析理解数据...',
+  data_preview: '数据预览',
+  loading_data: '正在加载数据...',
+  filter_placeholder: '输入筛选内容',
+  reset: '重置',
+  confirm: '确定',
+  rows: '行',
+  columns: '列',
+  total_records: '共 {{count}} 条',
   // Header
   help_center: '帮助中心',
   // ChatHeader

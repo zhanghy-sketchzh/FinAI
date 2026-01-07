@@ -119,11 +119,16 @@ class QueryRewriteAgent:
         logger.info(f"规则改写 - 改写结果: {result['rewritten_query']}")
         yield result
 
+    
+    
     def _rule_based_rewrite(self, user_query: str, table_schema_json: str) -> Dict:
         """
         基于规则的Query改写（不依赖LLM，快速可靠）
         """
         try:
+            # 规则改写不进行相关性判断，统一返回 is_relevant=True
+            # 相关性判断交给LLM处理（更准确）
+            
             # 解析schema JSON
             if isinstance(table_schema_json, str):
                 schema_obj = json.loads(table_schema_json)
@@ -235,6 +240,7 @@ class QueryRewriteAgent:
 
             return {
                 "original_query": user_query,
+                "is_relevant": True,
                 "rewritten_query": rewritten_query,
                 "relevant_columns": relevant_columns,
                 "analysis_suggestions": analysis_suggestions,
@@ -364,6 +370,7 @@ class QueryRewriteAgent:
 === 输出格式（JSON） ===
 请严格按照以下JSON格式输出：
 {{
+  "is_relevant": true,  // 布尔值，表示用户问题是否与数据表分析相关。如果是闲聊（如"今天天气怎么样"、"你吃饭了吗"）则为false
   "rewritten_query": "改写后的完整问题，明确指出需要分析的维度和指标",
   "relevant_columns": [
     {{
@@ -384,6 +391,12 @@ class QueryRewriteAgent:
   }}
 }}
 
+
+**关于 is_relevant 的说明**：
+- 判断用户问题是否与当前数据表的分析相关
+- 如果是数据分析问题（如"销售额是多少"、"利润排名"、"同比增长"等），设为 true
+- 如果是闲聊或与数据表无关的问题（如"今天天气怎么样"、"你吃饭了吗"、"讲个笑话"等），设为 false
+- 当 is_relevant 为 false 时，其他字段可以简化或省略
 
 **关于 domain_knowledge 的说明**：
 - 只有当用户明确纠正、补充或说明了某个字段的使用方法时才需要填写
@@ -426,6 +439,7 @@ class QueryRewriteAgent:
 === Output Format (JSON) ===
 Please strictly follow the following JSON format:
 {{
+  "is_relevant": true,  // Boolean value indicating whether the user's question is related to data table analysis. If it's small talk (e.g., "How's the weather today", "Did you eat"), set to false
   "rewritten_query": "The enhanced complete question, clearly indicating the dimensions and indicators to be analyzed",
   "relevant_columns": [
     {{
@@ -447,6 +461,12 @@ Please strictly follow the following JSON format:
 }}
 
 
+
+**About is_relevant**:
+- Determine whether the user's question is related to the analysis of the current data table
+- If it's a data analysis question (e.g., "What is the sales amount", "Profit ranking", "Year-over-year growth"), set to true
+- If it's small talk or unrelated to the data table (e.g., "How's the weather today", "Did you eat", "Tell me a joke"), set to false
+- When is_relevant is false, other fields can be simplified or omitted
 
 **About domain_knowledge**:
 - Only fill in when the user explicitly corrects, supplements, or explains the usage method of a field
@@ -582,6 +602,10 @@ Now please combine the historical context and the user's current question, analy
                 result = json.loads(json_str)
 
                 # 验证必要字段是否存在
+                if "is_relevant" not in result:
+                    logger.warning("JSON缺少 'is_relevant' 字段，默认设为 true")
+                    result["is_relevant"] = True
+                
                 if not result.get("rewritten_query"):
                     logger.error("JSON缺少必要字段 'rewritten_query'")
                     raise JSONParseError("JSON缺少必要字段 'rewritten_query'")
@@ -626,6 +650,7 @@ Now please combine the historical context and the user's current question, analy
         """
         return {
             "original_query": original_query,
+            "is_relevant": True,
             "rewritten_query": original_query,
             "relevant_columns": [],
             "analysis_suggestions": ["请明确需要分析的数据维度和指标"],

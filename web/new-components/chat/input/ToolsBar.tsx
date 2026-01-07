@@ -1,6 +1,6 @@
 import { apiInterceptors, clearAllCaches, clearChatHistory } from '@/client/api';
 import { ChatContentContext } from '@/pages/chat';
-import { ClearOutlined, DeleteOutlined, LoadingOutlined, PauseCircleOutlined } from '@ant-design/icons';
+import { ClearOutlined, DeleteOutlined, EyeInvisibleOutlined, EyeOutlined, LoadingOutlined, PauseCircleOutlined } from '@ant-design/icons';
 import type { UploadFile } from 'antd';
 import { Modal, Spin, Tooltip, message } from 'antd';
 import classNames from 'classnames';
@@ -40,8 +40,11 @@ const ToolsBar: React.FC<{
     temperatureValue,
     maxNewTokensValue: _maxNewTokensValue,
     resourceValue,
+    excelPreviewData,
+    excelPreviewVisible,
     setTemperatureValue: _setTemperatureValue,
     setMaxNewTokensValue: _setMaxNewTokensValue,
+    setExcelPreviewVisible,
     refreshHistory,
     setCanAbort,
     setReplyLoading,
@@ -201,14 +204,16 @@ const ToolsBar: React.FC<{
       // First try to get file_name from resourceValue
       if (resourceValue) {
         if (typeof resourceValue === 'string') {
-          return JSON.parse(resourceValue).file_name || '';
+          const parsed = JSON.parse(resourceValue);
+          return parsed.file_name || parsed.original_filename || '';
         } else {
-          return resourceValue.file_name || '';
+          return resourceValue.file_name || resourceValue.original_filename || '';
         }
       }
       // Fall back to currentDialogue.select_param only if conv_uid matches current chatId
       if (currentDialogue?.select_param && currentDialogue?.conv_uid === chatId) {
-        return JSON.parse(currentDialogue.select_param).file_name || '';
+        const parsed = JSON.parse(currentDialogue.select_param);
+        return parsed.file_name || parsed.original_filename || '';
       }
       return '';
     } catch {
@@ -216,56 +221,113 @@ const ToolsBar: React.FC<{
     }
   }, [resourceValue, currentDialogue?.select_param, currentDialogue?.conv_uid, chatId]);
 
-  const ResourceItemsDisplay = () => {
-    // 只有当 currentDialogue.conv_uid 匹配当前 chatId 时才使用 currentDialogue.select_param
+  // 获取文件资源（仅文件类型，不包括图片）
+  const fileResources = useMemo(() => {
     const selectParam =
       currentDialogue?.select_param && currentDialogue?.conv_uid === chatId
         ? currentDialogue.select_param
         : null;
     const resources = parseResourceValue(resourceValue) || parseResourceValue(selectParam) || [];
+    return resources.filter(item => item.type === 'file_url' && item.file_url?.url);
+  }, [resourceValue, currentDialogue?.select_param, currentDialogue?.conv_uid, chatId]);
 
-    if (resources.length === 0) return null;
+  // 获取图片资源
+  const imageResources = useMemo(() => {
+    const selectParam =
+      currentDialogue?.select_param && currentDialogue?.conv_uid === chatId
+        ? currentDialogue.select_param
+        : null;
+    const resources = parseResourceValue(resourceValue) || parseResourceValue(selectParam) || [];
+    return resources.filter(item => item.type === 'image_url' && item.image_url?.url);
+  }, [resourceValue, currentDialogue?.select_param, currentDialogue?.conv_uid, chatId]);
+
+  // 文件名显示组件（在同一行显示）
+  const FileNameDisplay = () => {
+    if (fileResources.length === 0) return null;
+
+    const handlePreviewClick = (isExcelFile: boolean) => {
+      if (!isExcelFile) return;
+      
+      if (excelPreviewData) {
+        // 有数据，直接切换显示状态
+        setExcelPreviewVisible?.(!excelPreviewVisible);
+      } else {
+        // 没有数据，打开预览面板（会触发数据加载）
+        setExcelPreviewVisible?.(true);
+      }
+    };
 
     return (
-      <div className='group/item flex flex-wrap gap-2 mt-2'>
-        {resources.map((item, index) => {
-          // Handle image type
-          if (item.type === 'image_url' && item.image_url?.url) {
-            const fileName = item.image_url.fileName;
-            const previewUrl = transformFileUrl(item.image_url.url);
-            return (
-              <div
-                key={`img-${index}`}
-                className='flex flex-col border border-[#e3e4e6] dark:border-[rgba(255,255,255,0.6)] rounded-lg p-2'
-              >
-                {/* Add image preview */}
-                <div className='w-32 h-32 mb-2 overflow-hidden flex items-center justify-center bg-gray-100 dark:bg-gray-800 rounded'>
-                  <img src={previewUrl} alt={fileName || 'Preview'} className='max-w-full max-h-full object-contain' />
-                </div>
-                <div className='flex items-center'>
-                  <span className='text-sm text-[#1c2533] dark:text-white line-clamp-1'>{fileName}</span>
-                </div>
-              </div>
-            );
-          }
-          // Handle file type
-          else if (item.type === 'file_url' && item.file_url?.url) {
-            const fileName = item.file_url.file_name;
+      <>
+        {fileResources.map((item, index) => {
+          const fileName = item.file_url?.file_name;
+          const isExcelFile = /\.(xlsx?|csv)$/i.test(fileName || '');
 
-            return (
+          return (
+            <Tooltip
+              key={`file-${index}`}
+              title={
+                isExcelFile
+                  ? excelPreviewData
+                    ? excelPreviewVisible
+                      ? '关闭预览'
+                      : '查看数据'
+                    : '点击加载预览数据'
+                  : ''
+              }
+            >
               <div
-                key={`file-${index}`}
-                className='flex items-center justify-between border border-[#e3e4e6] dark:border-[rgba(255,255,255,0.6)] rounded-lg p-2'
+                className={classNames(
+                  'flex items-center justify-between border border-[#e3e4e6] dark:border-[rgba(255,255,255,0.6)] rounded-lg p-2',
+                  { 'cursor-pointer hover:bg-gray-50 dark:hover:bg-gray-800 transition-colors': isExcelFile },
+                )}
+                onClick={() => handlePreviewClick(isExcelFile)}
               >
                 <div className='flex items-center'>
                   <Image src={`/icons/chat/excel.png`} width={20} height={20} alt='file-icon' className='mr-2' />
                   <span className='text-sm text-[#1c2533] dark:text-white line-clamp-1'>{fileName}</span>
+                  {isExcelFile && (
+                    excelPreviewData ? (
+                      excelPreviewVisible ? (
+                        <EyeOutlined className='ml-2 text-blue-500' />
+                      ) : (
+                        <EyeInvisibleOutlined className='ml-2 text-gray-400 hover:text-blue-500' />
+                      )
+                    ) : (
+                      <LoadingOutlined className='ml-2 text-gray-400 hover:text-blue-500 animate-spin' style={{ fontSize: 14 }} />
+                    )
+                  )}
                 </div>
               </div>
-            );
-          }
+            </Tooltip>
+          );
+        })}
+      </>
+    );
+  };
 
-          return null;
+  // 图片资源显示组件（单独一行显示）
+  const ImageResourcesDisplay = () => {
+    if (imageResources.length === 0) return null;
+
+    return (
+      <div className='group/item flex flex-wrap gap-2 mt-2'>
+        {imageResources.map((item, index) => {
+          const fileName = item.image_url.fileName;
+          const previewUrl = transformFileUrl(item.image_url.url);
+          return (
+            <div
+              key={`img-${index}`}
+              className='flex flex-col border border-[#e3e4e6] dark:border-[rgba(255,255,255,0.6)] rounded-lg p-2'
+            >
+              <div className='w-32 h-32 mb-2 overflow-hidden flex items-center justify-center bg-gray-100 dark:bg-gray-800 rounded'>
+                <img src={previewUrl} alt={fileName || 'Preview'} className='max-w-full max-h-full object-contain' />
+              </div>
+              <div className='flex items-center'>
+                <span className='text-sm text-[#1c2533] dark:text-white line-clamp-1'>{fileName}</span>
+              </div>
+            </div>
+          );
         })}
       </div>
     );
@@ -274,14 +336,15 @@ const ToolsBar: React.FC<{
   return (
     <div className='flex flex-col  mb-2'>
       <div className='flex items-center justify-between h-full w-full'>
-        <div className='flex gap-3 text-lg'>
+        <div className='flex gap-3 text-lg items-center'>
           {/* <ModelSwitcher /> */}
           <Resource fileList={fileList} setFileList={setFileList} setLoading={setLoading} fileName={fileName} />
+          <FileNameDisplay />
           {/* Temperature and MaxNewTokens icons hidden */}
         </div>
         <div className='flex gap-1'>{returnTools(rightToolsConfig)}</div>
       </div>
-      <ResourceItemsDisplay />
+      <ImageResourcesDisplay />
       {loading && (
         <div className='flex items-center gap-2 mt-2'>
           <Spin spinning={loading} indicator={<LoadingOutlined style={{ fontSize: 16 }} spin />} />
