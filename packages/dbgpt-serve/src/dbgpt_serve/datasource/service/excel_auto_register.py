@@ -390,6 +390,131 @@ class ExcelAutoRegisterService:
             if model_name is not None:
                 self.model_name = model_name
 
+    def _remove_excel_filters(self, excel_file_path: str) -> str:
+        """
+        去除 Excel 文件的筛选状态，返回处理后的文件路径
+        
+        使用直接操作 XML 的方式，避免 openpyxl 解析筛选条件时的兼容性问题
+        
+        Args:
+            excel_file_path: Excel 文件路径
+            
+        Returns:
+            处理后的文件路径
+        """
+        import zipfile
+        import tempfile
+        import shutil
+        import re
+        
+        file_ext = Path(excel_file_path).suffix.lower()
+        
+        # .xls 格式不是 zip 包，跳过处理
+        if file_ext == '.xls':
+            logger.info("检测到 .xls 格式，跳过筛选去除")
+            return excel_file_path
+        
+        try:
+            # xlsx 文件本质是一个 zip 包，直接操作 XML 内容
+            temp_dir = tempfile.mkdtemp()
+            temp_xlsx = os.path.join(temp_dir, "temp_output.xlsx")
+            
+            filters_removed = False
+            
+            with zipfile.ZipFile(excel_file_path, 'r') as zip_in:
+                with zipfile.ZipFile(temp_xlsx, 'w', zipfile.ZIP_DEFLATED) as zip_out:
+                    for item in zip_in.namelist():
+                        data = zip_in.read(item)
+                        
+                        # 处理工作表文件 (xl/worksheets/sheet*.xml)
+                        if item.startswith('xl/worksheets/sheet') and item.endswith('.xml'):
+                            content = data.decode('utf-8')
+                            original_content = content
+                            
+                            # 删除 autoFilter 元素（包含筛选条件）
+                            # 匹配 <autoFilter ... /> 或 <autoFilter ...>...</autoFilter>
+                            content = re.sub(
+                                r'<autoFilter[^>]*/>',
+                                '',
+                                content
+                            )
+                            content = re.sub(
+                                r'<autoFilter[^>]*>.*?</autoFilter>',
+                                '',
+                                content,
+                                flags=re.DOTALL
+                            )
+                            
+                            # 删除行的 hidden 属性（取消隐藏被筛选隐藏的行）
+                            # 将 <row ... hidden="1" ...> 中的 hidden="1" 删除
+                            content = re.sub(
+                                r'(<row[^>]*)\s+hidden="1"([^>]*>)',
+                                r'\1\2',
+                                content
+                            )
+                            content = re.sub(
+                                r'(<row[^>]*)\s+hidden="true"([^>]*>)',
+                                r'\1\2',
+                                content,
+                                flags=re.IGNORECASE
+                            )
+                            
+                            if content != original_content:
+                                filters_removed = True
+                                logger.info(f"已从 {item} 中移除筛选和隐藏行")
+                            
+                            data = content.encode('utf-8')
+                        
+                        zip_out.writestr(item, data)
+            
+            if filters_removed:
+                # 替换原文件
+                shutil.move(temp_xlsx, excel_file_path)
+                logger.info(f"已去除 Excel 文件的筛选状态: {excel_file_path}")
+            else:
+                # 没有修改，删除临时文件
+                os.remove(temp_xlsx)
+            
+            # 清理临时目录
+            shutil.rmtree(temp_dir, ignore_errors=True)
+            
+            return excel_file_path
+            
+        except Exception as e:
+            logger.warning(f"去除 Excel 筛选状态失败（XML方式），尝试 openpyxl 方式: {e}")
+            # 回退到 openpyxl 方式
+            return self._remove_excel_filters_openpyxl(excel_file_path)
+    
+    def _remove_excel_filters_openpyxl(self, excel_file_path: str) -> str:
+        """
+        使用 openpyxl 去除 Excel 文件的筛选状态（备用方案）
+        """
+        try:
+            wb = openpyxl.load_workbook(excel_file_path)
+            filters_removed = False
+            
+            for ws in wb.worksheets:
+                if ws.auto_filter and ws.auto_filter.ref:
+                    logger.info(f"去除工作表 '{ws.title}' 的筛选状态")
+                    ws.auto_filter.ref = None
+                    filters_removed = True
+                
+                for row in ws.row_dimensions:
+                    if ws.row_dimensions[row].hidden:
+                        ws.row_dimensions[row].hidden = False
+                        filters_removed = True
+            
+            if filters_removed:
+                wb.save(excel_file_path)
+                logger.info(f"已去除 Excel 文件的筛选状态 (openpyxl): {excel_file_path}")
+            
+            wb.close()
+            return excel_file_path
+            
+        except Exception as e:
+            logger.warning(f"openpyxl 去除筛选也失败，继续使用原文件: {e}")
+            return excel_file_path
+
     def _read_excel_file(self, excel_file_path: str, sheet_name=None, header=None) -> pd.DataFrame:
         """
         智能读取 Excel 文件，支持 .xls 和 .xlsx 格式
@@ -513,23 +638,39 @@ class ExcelAutoRegisterService:
                 rows_data.append(row_values)
                 rows_colors.append(row_colors)
         else:
-            # .xlsx 文件使用 openpyxl 读取颜色信息
-            wb = openpyxl.load_workbook(excel_file_path)
-            ws = wb[sheet_name] if sheet_name else wb.active
+            # .xlsx 文件尝试使用 openpyxl 读取颜色信息
+            try:
+                wb = openpyxl.load_workbook(excel_file_path)
+                ws = wb[sheet_name] if sheet_name else wb.active
 
-            max_check_rows = min(20, ws.max_row)
-            max_cols = ws.max_column
+                max_check_rows = min(20, ws.max_row)
+                max_cols = ws.max_column
 
-            for row_idx in range(1, max_check_rows + 1):
-                row_values = []
-                row_colors = []
-                for col_idx in range(1, max_cols + 1):
-                    cell = ws.cell(row=row_idx, column=col_idx)
-                    cell_value = self._get_cell_value(cell)
-                    row_values.append(cell_value if cell_value is not None else "")
-                    row_colors.append(self._get_cell_bg_color(cell))
-                rows_data.append(row_values)
-                rows_colors.append(row_colors)
+                for row_idx in range(1, max_check_rows + 1):
+                    row_values = []
+                    row_colors = []
+                    for col_idx in range(1, max_cols + 1):
+                        cell = ws.cell(row=row_idx, column=col_idx)
+                        cell_value = self._get_cell_value(cell)
+                        row_values.append(cell_value if cell_value is not None else "")
+                        row_colors.append(self._get_cell_bg_color(cell))
+                    rows_data.append(row_values)
+                    rows_colors.append(row_colors)
+            except Exception as e:
+                # openpyxl 读取失败（可能是无效 XML），回退到 pandas 读取
+                logger.warning(f"openpyxl 读取 .xlsx 文件失败，回退到 pandas: {e}")
+                df_preview = self._read_excel_file(excel_file_path, sheet_name=sheet_name, header=None)
+                
+                max_check_rows = min(20, len(df_preview))
+                max_cols = len(df_preview.columns) if len(df_preview) > 0 else 0
+                
+                rows_data = []
+                rows_colors = []
+                for i in range(max_check_rows):
+                    row_values = [str(v) if pd.notna(v) else "" for v in df_preview.iloc[i].tolist()]
+                    row_colors = [None] * len(row_values)  # 无法获取颜色，全部设为 None
+                    rows_data.append(row_values)
+                    rows_colors.append(row_colors)
 
         if self.llm_client:
             try:
@@ -1472,6 +1613,9 @@ class ExcelAutoRegisterService:
         """
         if original_filename is None:
             original_filename = Path(excel_file_path).name
+
+        # 首先去除 Excel 文件的筛选状态，确保读取所有数据
+        excel_file_path = self._remove_excel_filters(excel_file_path)
 
         # 读取Excel获取sheet信息
         file_ext = Path(excel_file_path).suffix.lower()
