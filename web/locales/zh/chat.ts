@@ -98,4 +98,5 @@ export const ChatZh: Resources['translation'] = {
   chat_excel_tip_3: '可以点击"数据预览"查看已上传的数据，确保数据正确加载',
   chat_excel_tip_4: '使用"清除所有数据"可以删除所有缓存、数据库和历史记录，重新开始',
   chat_excel_tip_5: '使用"清除记忆"可以清空当前对话的上下文，但保留数据和历史记录',
+  upload_excel_prompt: '请先上传 Excel 文件开始分析',
 } as const;

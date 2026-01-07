@@ -494,35 +494,42 @@ class ExcelAutoRegisterService:
         """
         file_ext = Path(excel_file_path).suffix.lower()
         
-        # .xls 文件不支持 openpyxl，跳过颜色检测，使用简单的规则
-        if file_ext == '.xls':
-            logger.info("检测到 .xls 格式，跳过颜色检测，使用简单规则")
-            # 读取前几行数据
-            df_preview = self._read_excel_file(excel_file_path, sheet_name=sheet_name, header=None)
-            # 假设前1-2行是表头
-            if len(df_preview) > 0:
-                return [0], {"method": "simple_rule_for_xls"}
-            return [0], {"method": "default"}
-        
-        wb = openpyxl.load_workbook(excel_file_path)
-        ws = wb[sheet_name] if sheet_name else wb.active
-
-        max_check_rows = min(20, ws.max_row)
-        max_cols = ws.max_column
-
         rows_data = []
         rows_colors = []
+        max_cols = 0
+        
+        # .xls 文件不支持 openpyxl，跳过颜色检测，其他流程保持一致
+        if file_ext == '.xls':
+            logger.info("检测到 .xls 格式，跳过颜色检测")
+            # 读取前几行数据
+            df_preview = self._read_excel_file(excel_file_path, sheet_name=sheet_name, header=None)
+            
+            max_check_rows = min(20, len(df_preview))
+            max_cols = len(df_preview.columns) if len(df_preview) > 0 else 0
+            
+            for i in range(max_check_rows):
+                row_values = [str(v) if pd.notna(v) else "" for v in df_preview.iloc[i].tolist()]
+                row_colors = [None] * len(row_values)  # .xls 不支持颜色检测，全部设为 None
+                rows_data.append(row_values)
+                rows_colors.append(row_colors)
+        else:
+            # .xlsx 文件使用 openpyxl 读取颜色信息
+            wb = openpyxl.load_workbook(excel_file_path)
+            ws = wb[sheet_name] if sheet_name else wb.active
 
-        for row_idx in range(1, max_check_rows + 1):
-            row_values = []
-            row_colors = []
-            for col_idx in range(1, max_cols + 1):
-                cell = ws.cell(row=row_idx, column=col_idx)
-                cell_value = self._get_cell_value(cell)
-                row_values.append(cell_value if cell_value is not None else "")
-                row_colors.append(self._get_cell_bg_color(cell))
-            rows_data.append(row_values)
-            rows_colors.append(row_colors)
+            max_check_rows = min(20, ws.max_row)
+            max_cols = ws.max_column
+
+            for row_idx in range(1, max_check_rows + 1):
+                row_values = []
+                row_colors = []
+                for col_idx in range(1, max_cols + 1):
+                    cell = ws.cell(row=row_idx, column=col_idx)
+                    cell_value = self._get_cell_value(cell)
+                    row_values.append(cell_value if cell_value is not None else "")
+                    row_colors.append(self._get_cell_bg_color(cell))
+                rows_data.append(row_values)
+                rows_colors.append(row_colors)
 
         if self.llm_client:
             try:

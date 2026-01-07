@@ -29,6 +29,7 @@ const ToolsBar: React.FC<{
   const { t } = useTranslation();
   const searchParams = useSearchParams();
   const chatId = searchParams?.get('id') ?? '';
+  const scene = searchParams?.get('scene') ?? '';
 
   const {
     history,
@@ -354,6 +355,12 @@ const ToolsBar: React.FC<{
             </div>
           )}
           <FileNameDisplay />
+          {/* 当没有文件且是 chat_excel 场景时，显示上传提示 */}
+          {scene === 'chat_excel' && !fileName && fileResources.length === 0 && !loading && (
+            <span className='text-sm text-gray-400 dark:text-gray-500'>
+              {t('upload_excel_prompt')}
+            </span>
+          )}
           {/* Temperature and MaxNewTokens icons hidden */}
         </div>
         <div className='flex gap-1'>{returnTools(rightToolsConfig)}</div>

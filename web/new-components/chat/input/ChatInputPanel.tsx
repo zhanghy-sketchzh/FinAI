@@ -50,6 +50,41 @@ const ChatInputPanel: React.ForwardRefRenderFunction<any, { ctrl: AbortControlle
     return appInfo.param_need?.map(i => i.type) || [];
   }, [appInfo.param_need]);
 
+  // 判断是否有文件上传（用于 chat_excel 场景）
+  const hasFileUploaded = useMemo(() => {
+    if (scene !== 'chat_excel') return true; // 非 chat_excel 场景始终显示输入框
+    
+    try {
+      // 检查 resourceValue
+      if (resourceValue) {
+        if (typeof resourceValue === 'string') {
+          const parsed = JSON.parse(resourceValue);
+          if (parsed.file_name || parsed.original_filename) return true;
+        } else {
+          if (resourceValue.file_name || resourceValue.original_filename) return true;
+        }
+      }
+      
+      // 检查 currentDialogue.select_param
+      if (currentDialogue?.select_param && currentDialogue?.conv_uid === chatId) {
+        const parsed = JSON.parse(currentDialogue.select_param);
+        if (parsed.file_name || parsed.original_filename) return true;
+      }
+      
+      // 检查 parseResourceValue
+      const selectParam = currentDialogue?.select_param && currentDialogue?.conv_uid === chatId
+        ? currentDialogue.select_param
+        : null;
+      const resources = parseResourceValue(resourceValue) || parseResourceValue(selectParam) || [];
+      const fileResources = resources.filter(item => item.type === 'file_url' && item.file_url?.url);
+      if (fileResources.length > 0) return true;
+      
+      return false;
+    } catch {
+      return false;
+    }
+  }, [scene, resourceValue, currentDialogue?.select_param, currentDialogue?.conv_uid, chatId]);
+
   // 当会话ID变化时，清除动态推荐问题
   useEffect(() => {
     const currentConvUid = currentDialogue?.conv_uid || '';
@@ -383,58 +418,62 @@ const ChatInputPanel: React.ForwardRefRenderFunction<any, { ctrl: AbortControlle
         id='input-panel'
       >
         <ToolsBar ctrl={ctrl} onLoadingChange={setFileUploading} />
-        <Input.TextArea
-          placeholder={t('input_tips')}
-          className='w-full h-20 resize-none border-0 p-0 focus:shadow-none dark:bg-transparent'
-          value={userInput}
-          onKeyDown={e => {
-            if (e.key === 'Enter') {
-              if (e.shiftKey) {
-                return;
-              }
-              if (isZhInput) {
-                return;
-              }
-              e.preventDefault();
-              if (!userInput.trim() || replyLoading || fileUploading) {
-                return;
-              }
-              onSubmit();
-            }
-          }}
-          onChange={e => {
-            setUserInput(e.target.value);
-          }}
-          onFocus={() => {
-            setIsFocus(true);
-          }}
-          onBlur={() => setIsFocus(false)}
-          onCompositionStart={() => setIsZhInput(true)}
-          onCompositionEnd={() => setIsZhInput(false)}
-        />
-        <Button
-          type='primary'
-          className={classNames(
-            'flex items-center justify-center w-14 h-8 rounded-lg text-sm absolute right-4 bottom-3 bg-button-gradient border-0',
-            {
-              'cursor-not-allowed': !userInput.trim() || fileUploading,
-              'opacity-40': fileUploading,
-            },
-          )}
-          disabled={fileUploading}
-          onClick={() => {
-            if (replyLoading || !userInput.trim() || fileUploading) {
-              return;
-            }
-            onSubmit();
-          }}
-        >
-          {replyLoading ? (
-            <Spin spinning={replyLoading} indicator={<LoadingOutlined className='text-white' />} />
-          ) : (
-            t('sent')
-          )}
-        </Button>
+        {hasFileUploaded && (
+          <>
+            <Input.TextArea
+              placeholder={t('input_tips')}
+              className='w-full h-20 resize-none border-0 p-0 focus:shadow-none dark:bg-transparent'
+              value={userInput}
+              onKeyDown={e => {
+                if (e.key === 'Enter') {
+                  if (e.shiftKey) {
+                    return;
+                  }
+                  if (isZhInput) {
+                    return;
+                  }
+                  e.preventDefault();
+                  if (!userInput.trim() || replyLoading || fileUploading) {
+                    return;
+                  }
+                  onSubmit();
+                }
+              }}
+              onChange={e => {
+                setUserInput(e.target.value);
+              }}
+              onFocus={() => {
+                setIsFocus(true);
+              }}
+              onBlur={() => setIsFocus(false)}
+              onCompositionStart={() => setIsZhInput(true)}
+              onCompositionEnd={() => setIsZhInput(false)}
+            />
+            <Button
+              type='primary'
+              className={classNames(
+                'flex items-center justify-center w-14 h-8 rounded-lg text-sm absolute right-4 bottom-3 bg-button-gradient border-0',
+                {
+                  'cursor-not-allowed': !userInput.trim() || fileUploading,
+                  'opacity-40': fileUploading,
+                },
+              )}
+              disabled={fileUploading}
+              onClick={() => {
+                if (replyLoading || !userInput.trim() || fileUploading) {
+                  return;
+                }
+                onSubmit();
+              }}
+            >
+              {replyLoading ? (
+                <Spin spinning={replyLoading} indicator={<LoadingOutlined className='text-white' />} />
+              ) : (
+                t('sent')
+              )}
+            </Button>
+          </>
+        )}
       </div>
     </div>
   );

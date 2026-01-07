@@ -233,10 +233,18 @@ def read_from_df(
     )
     # read excel file
     if file_name.endswith(".xlsx") or file_name.endswith(".xls"):
-        df_tmp = pd.read_excel(file_info, index_col=False)
+        # 使用 BytesIO 包装字节数据，避免 FutureWarning
+        file_buffer = io.BytesIO(file_info) if isinstance(file_info, bytes) else file_info
+        # 根据文件扩展名选择合适的引擎
+        engine = 'xlrd' if file_name.endswith('.xls') else 'openpyxl'
+        df_tmp = pd.read_excel(file_buffer, index_col=False, engine=engine)
+        # 重置 buffer 位置以便再次读取
+        if hasattr(file_buffer, 'seek'):
+            file_buffer.seek(0)
         df = pd.read_excel(
-            file_info,
+            file_buffer,
             index_col=False,
+            engine=engine,
             converters={i: csv_colunm_foramt for i in range(df_tmp.shape[1])},
         )
     elif file_name.endswith(".csv"):
