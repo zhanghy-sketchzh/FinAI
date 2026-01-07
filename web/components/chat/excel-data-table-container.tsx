@@ -3,10 +3,10 @@ import { useContext } from 'react';
 import ExcelDataTable from './excel-data-table';
 
 const ExcelDataTableContainer: React.FC = () => {
-  const { excelPreviewData, setExcelPreviewData, setExcelPreviewVisible } = useContext(ChatContentContext);
+  const { excelPreviewData, setExcelPreviewVisible } = useContext(ChatContentContext);
 
   const handleDelete = () => {
-    setExcelPreviewData?.(undefined);
+    // 只隐藏预览面板，不清除数据，这样用户可以再次点击眼睛图标重新显示
     setExcelPreviewVisible?.(false);
   };
 

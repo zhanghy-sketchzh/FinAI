@@ -285,8 +285,9 @@ class ChatExcel(BaseChat):
         else:
             database_root_path = os.path.join(DATA_DIR, "_chat_excel_tmp")
             os.makedirs(database_root_path, exist_ok=True)
+            # 使用 conv_uid 确保不同会话的数据库文件隔离，支持并发
             database_file_path = os.path.join(
-                database_root_path, f"_chat_excel_{file_name}.duckdb"
+                database_root_path, f"_chat_excel_{conv_uid}_{file_name}.duckdb"
             )
             database_file_id = None
 
@@ -295,8 +296,9 @@ class ChatExcel(BaseChat):
             file_name = os.path.basename(file_path)
 
             if not duckdb_path:
+                # 使用 conv_uid 确保不同会话的数据库文件隔离，支持并发
                 database_file_path = os.path.join(
-                    database_root_path, f"_chat_excel_{file_name}.duckdb"
+                    database_root_path, f"_chat_excel_{conv_uid}_{file_name}.duckdb"
                 )
                 database_file_id = f"{file_meta.file_id}_{conv_uid}"
                 db_files = fs_client.list_files(

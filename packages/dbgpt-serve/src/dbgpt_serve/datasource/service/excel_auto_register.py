@@ -389,6 +389,28 @@ class ExcelAutoRegisterService:
                 self.llm_client = llm_client
             if model_name is not None:
                 self.model_name = model_name
+            # 如果当前 model_name 还是 None，尝试获取默认模型
+            elif self.model_name is None:
+                self.model_name = self._get_default_model_name()
+
+    def _get_default_model_name(self) -> Optional[str]:
+        """
+        从配置中获取默认的 LLM 模型名称
+        
+        Returns:
+            默认模型名称，如果无法获取则返回 None
+        """
+        try:
+            # 尝试从 dbgpt 配置中获取默认模型
+            from dbgpt._private.config import Config
+            cfg = Config()
+            if cfg.LLM_MODEL and cfg.LLM_MODEL != "proxyllm":
+                logger.info(f"使用配置中的默认模型: {cfg.LLM_MODEL}")
+                return cfg.LLM_MODEL
+        except Exception as e:
+            logger.warning(f"无法从配置获取默认模型: {e}")
+        
+        return None
 
     def _remove_excel_filters(self, excel_file_path: str) -> str:
         """
