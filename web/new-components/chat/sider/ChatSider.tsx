@@ -11,6 +11,7 @@ import Icon, {
   DeleteOutlined,
   GlobalOutlined,
   PlusOutlined,
+  QuestionCircleOutlined,
 } from '@ant-design/icons';
 import type { MenuProps } from 'antd';
 import { Flex, Layout, Modal, Popover, Spin, Tooltip, Typography } from 'antd';
@@ -157,6 +158,7 @@ const ChatSider: React.FC<{
   const { mode, setMode, model, setCurrentDialogInfo } = useContext(ChatContext);
   const { setResourceValue, setHistory } = useContext(ChatContentContext);
   const [collapsed, setCollapsed] = useState<boolean>(scene === 'chat_dashboard');
+  const [helpModalVisible, setHelpModalVisible] = useState<boolean>(false);
 
   // 新建会话
   const handleNewChat = useCallback(async () => {
@@ -282,6 +284,15 @@ const ChatSider: React.FC<{
         {/* 底部设置区域 */}
         <div className='px-4 py-2 border-t border-dashed border-gray-200 dark:border-gray-700'>
           <div className='flex items-center justify-end gap-1'>
+            {/* 帮助文档 */}
+            <Popover content={t('help_doc')}>
+              <div
+                className='flex items-center justify-center w-8 h-8 rounded-md hover:bg-[#F1F5F9] dark:hover:bg-theme-dark cursor-pointer text-lg'
+                onClick={() => setHelpModalVisible(true)}
+              >
+                <QuestionCircleOutlined />
+              </div>
+            </Popover>
             {/* 主题切换 */}
             <Popover content={t('Theme')}>
               <div
@@ -302,6 +313,112 @@ const ChatSider: React.FC<{
             </Popover>
           </div>
         </div>
+
+        {/* 帮助文档模态窗口 */}
+        <Modal
+          title={t('chat_excel_help_title')}
+          open={helpModalVisible}
+          onCancel={() => setHelpModalVisible(false)}
+          footer={null}
+          width={700}
+          centered
+        >
+          <div className='space-y-4 py-4'>
+            {/* 功能介绍 */}
+            <div>
+              <h3 className='text-base font-semibold mb-2 text-[#1c2533] dark:text-[rgba(255,255,255,0.85)]'>
+                {t('chat_excel_features_title')}
+              </h3>
+              <p className='text-sm text-[#525964] dark:text-[rgba(255,255,255,0.65)] mb-2'>
+                {t('chat_excel_features_desc')}
+              </p>
+              <ul className='list-disc list-inside space-y-1 text-sm text-[#525964] dark:text-[rgba(255,255,255,0.65)]'>
+                <li>{t('chat_excel_feature_1')}</li>
+                <li>{t('chat_excel_feature_2')}</li>
+                <li>{t('chat_excel_feature_3')}</li>
+                <li>{t('chat_excel_feature_4')}</li>
+                <li>{t('chat_excel_feature_5')}</li>
+                <li>{t('chat_excel_feature_6')}</li>
+                <li>{t('chat_excel_feature_7')}</li>
+              </ul>
+            </div>
+
+            {/* 执行流程 */}
+            <div>
+              <h3 className='text-base font-semibold mb-2 text-[#1c2533] dark:text-[rgba(255,255,255,0.85)]'>
+                {t('chat_excel_workflow_title')}
+              </h3>
+              <div className='space-y-3'>
+                <div className='flex items-start gap-3'>
+                  <div className='flex items-center justify-center w-6 h-6 rounded-full bg-blue-500 text-white text-xs font-semibold flex-shrink-0 mt-0.5'>
+                    1
+                  </div>
+                  <div>
+                    <p className='text-sm font-medium text-[#1c2533] dark:text-[rgba(255,255,255,0.85)]'>
+                      {t('chat_excel_step_1_title')}
+                    </p>
+                    <p className='text-xs text-[#525964] dark:text-[rgba(255,255,255,0.65)]'>
+                      {t('chat_excel_step_1_desc')}
+                    </p>
+                  </div>
+                </div>
+                <div className='flex items-start gap-3'>
+                  <div className='flex items-center justify-center w-6 h-6 rounded-full bg-blue-500 text-white text-xs font-semibold flex-shrink-0 mt-0.5'>
+                    2
+                  </div>
+                  <div>
+                    <p className='text-sm font-medium text-[#1c2533] dark:text-[rgba(255,255,255,0.85)]'>
+                      {t('chat_excel_step_2_title')}
+                    </p>
+                    <p className='text-xs text-[#525964] dark:text-[rgba(255,255,255,0.65)]'>
+                      {t('chat_excel_step_2_desc')}
+                    </p>
+                  </div>
+                </div>
+                <div className='flex items-start gap-3'>
+                  <div className='flex items-center justify-center w-6 h-6 rounded-full bg-blue-500 text-white text-xs font-semibold flex-shrink-0 mt-0.5'>
+                    3
+                  </div>
+                  <div>
+                    <p className='text-sm font-medium text-[#1c2533] dark:text-[rgba(255,255,255,0.85)]'>
+                      {t('chat_excel_step_3_title')}
+                    </p>
+                    <p className='text-xs text-[#525964] dark:text-[rgba(255,255,255,0.65)]'>
+                      {t('chat_excel_step_3_desc')}
+                    </p>
+                  </div>
+                </div>
+                <div className='flex items-start gap-3'>
+                  <div className='flex items-center justify-center w-6 h-6 rounded-full bg-blue-500 text-white text-xs font-semibold flex-shrink-0 mt-0.5'>
+                    4
+                  </div>
+                  <div>
+                    <p className='text-sm font-medium text-[#1c2533] dark:text-[rgba(255,255,255,0.85)]'>
+                      {t('chat_excel_step_4_title')}
+                    </p>
+                    <p className='text-xs text-[#525964] dark:text-[rgba(255,255,255,0.65)]'>
+                      {t('chat_excel_step_4_desc')}
+                    </p>
+                  </div>
+                </div>
+              </div>
+            </div>
+
+            {/* 使用提示 */}
+            <div>
+              <h3 className='text-base font-semibold mb-2 text-[#1c2533] dark:text-[rgba(255,255,255,0.85)]'>
+                {t('chat_excel_tips_title')}
+              </h3>
+              <ul className='list-disc list-inside space-y-1 text-sm text-[#525964] dark:text-[rgba(255,255,255,0.65)]'>
+                <li>{t('chat_excel_tip_1')}</li>
+                <li>{t('chat_excel_tip_2')}</li>
+                <li>{t('chat_excel_tip_3')}</li>
+                <li>{t('chat_excel_tip_4')}</li>
+                <li>{t('chat_excel_tip_5')}</li>
+              </ul>
+            </div>
+          </div>
+        </Modal>
       </div>
     </Sider>
   );

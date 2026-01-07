@@ -1,14 +1,13 @@
 import { ChatContext } from '@/app/chat-context';
-import { apiInterceptors, collectApp, newDialogue, unCollectApp } from '@/client/api';
+import { apiInterceptors, newDialogue } from '@/client/api';
 import { ChatContentContext } from '@/pages/chat';
 import { STORAGE_INIT_MESSAGE_KET } from '@/utils';
-import { LoadingOutlined, PlusOutlined, StarFilled, StarOutlined } from '@ant-design/icons';
-import { Spin, Tag, Typography } from 'antd';
+import { PlusOutlined } from '@ant-design/icons';
+import { Tag, Typography } from 'antd';
 import { useRouter } from 'next/router';
 import React, { useCallback, useContext, useMemo } from 'react';
 import { useTranslation } from 'react-i18next';
 
-import { useRequest } from 'ahooks';
 import AppDefaultIcon from '../../common/AppDefaultIcon';
 
 const tagColors = ['magenta', 'orange', 'geekblue', 'purple', 'cyan', 'green'];
@@ -16,7 +15,6 @@ const tagColors = ['magenta', 'orange', 'geekblue', 'purple', 'cyan', 'green'];
 const ChatHeader: React.FC<{ isScrollToTop: boolean }> = ({ isScrollToTop }) => {
   const {
     appInfo,
-    refreshAppInfo,
     handleChat,
     scrollRef,
     temperatureValue,
@@ -77,26 +75,6 @@ const ChatHeader: React.FC<{ isScrollToTop: boolean }> = ({ isScrollToTop }) => 
     return appInfo?.app_describe;
   }, [appScene, appInfo?.app_describe, t]);
 
-  // 应用收藏状态
-  const isCollected = useMemo(() => {
-    return appInfo?.is_collected === 'true';
-  }, [appInfo]);
-
-  const { run: operate, loading } = useRequest(
-    async () => {
-      const [error] = await apiInterceptors(
-        isCollected ? unCollectApp({ app_code: appInfo.app_code }) : collectApp({ app_code: appInfo.app_code }),
-      );
-      if (error) {
-        return;
-      }
-      return await refreshAppInfo();
-    },
-    {
-      manual: true,
-    },
-  );
-
   const paramKey: string[] = useMemo(() => {
     return appInfo.param_need?.map(i => i.type) || [];
   }, [appInfo.param_need]);
@@ -135,25 +113,6 @@ const ChatHeader: React.FC<{ isScrollToTop: boolean }> = ({ isScrollToTop }) => 
           >
             <PlusOutlined style={{ fontSize: 16 }} />
             <span className='text-sm font-medium'>{t('new_chat')}</span>
-          </div>
-          {/* 收藏 */}
-          <div
-            onClick={async () => {
-              await operate();
-            }}
-            className='flex items-center justify-center w-10 h-10 bg-[#ffffff99] dark:bg-[rgba(255,255,255,0.2)] border border-white dark:border-[rgba(255,255,255,0.2)] rounded-[50%] cursor-pointer'
-          >
-            {loading ? (
-              <Spin spinning={loading} indicator={<LoadingOutlined style={{ fontSize: 24 }} spin />} />
-            ) : (
-              <>
-                {isCollected ? (
-                  <StarFilled style={{ fontSize: 18 }} className='text-yellow-400 cursor-pointer' />
-                ) : (
-                  <StarOutlined style={{ fontSize: 18, cursor: 'pointer' }} />
-                )}
-              </>
-            )}
           </div>
         </div>
         {!!appInfo?.recommend_questions?.length && (
