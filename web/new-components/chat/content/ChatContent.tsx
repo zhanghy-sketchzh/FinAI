@@ -1,4 +1,5 @@
 import markdownComponents, { markdownPlugins, preprocessLaTeX } from '@/components/chat/chat-content/config';
+import { ChatContentContext } from '@/pages/chat';
 import { IChatDialogueMessageSchema } from '@/types/chat';
 import { STORAGE_USERINFO_KEY } from '@/utils/constants/index';
 import {
@@ -15,7 +16,7 @@ import classNames from 'classnames';
 import copy from 'copy-to-clipboard';
 import Image from 'next/image';
 import { useSearchParams } from 'next/navigation';
-import React, { memo, useMemo } from 'react';
+import React, { memo, useContext, useMemo } from 'react';
 import { useTranslation } from 'react-i18next';
 import Feedback from './Feedback';
 import RobotIcon from './RobotIcon';
@@ -87,11 +88,14 @@ const ChatContent: React.FC<{
         };
   };
   onLinkClick: () => void;
-}> = ({ content, onLinkClick }) => {
+  isLastMessage?: boolean;
+}> = ({ content, onLinkClick, isLastMessage = false }) => {
   const { t } = useTranslation();
 
   const searchParams = useSearchParams();
   const scene = searchParams?.get('scene') ?? '';
+
+  const { replyLoading } = useContext(ChatContentContext);
 
   const { context, model_name, role, thinking } = content;
 
@@ -262,7 +266,7 @@ const ChatContent: React.FC<{
                   </GPTVis>
                 </div>
               )}
-              {/* 正在思考 */}
+              {/* 正在思考 - 无内容时 */}
               {thinking && !context && (
                 <div className='flex items-center gap-2'>
                   <span className='flex text-sm text-[#1c2533] dark:text-white'>{t('thinking')}</span>
@@ -271,6 +275,13 @@ const ChatContent: React.FC<{
                     <div className='w-1 h-1 rounded-full mx-1 animate-pulse2'></div>
                     <div className='w-1 h-1 rounded-full mx-1 animate-pulse3'></div>
                   </div>
+                </div>
+              )}
+              {/* 正在生成 - 有内容但还在加载时 */}
+              {isLastMessage && replyLoading && context && (
+                <div className='flex items-center gap-2 mt-3 pt-3 border-t border-gray-100 dark:border-gray-700'>
+                  <LoadingOutlined className='text-blue-500' spin />
+                  <span className='text-sm text-gray-500 dark:text-gray-400'>{t('generating')}</span>
                 </div>
               )}
             </div>

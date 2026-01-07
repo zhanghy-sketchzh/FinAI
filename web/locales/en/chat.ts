@@ -91,4 +91,5 @@ export const ChatEn = {
   chat_excel_tip_4: 'Use "Clear All Data" to delete all caches, databases, and history to start over',
   chat_excel_tip_5: 'Use "Erase Memory" to clear current conversation context while keeping data and history',
   upload_excel_prompt: 'Please upload an Excel file to start analysis',
+  generating: 'Generating...',
 };

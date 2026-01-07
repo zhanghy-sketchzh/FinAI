@@ -320,9 +320,9 @@ class QueryRewriteAgent:
         history_context = ""
         if chat_history and len(chat_history) > 0:
             history_context = "\n=== 历史对话上下文 ===\n"
-            # 只保留最近4轮对话（8条消息），避免prompt过长
+            # 只保留最近3轮对话（6条消息），避免prompt过长
             recent_history = (
-                chat_history[-8:] if len(chat_history) > 8 else chat_history
+                chat_history[-6:] if len(chat_history) > 6 else chat_history
             )
 
             for msg in recent_history:

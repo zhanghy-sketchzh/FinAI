@@ -987,12 +987,15 @@ class ChatExcel(BaseChat):
                 table_schema = await blocking_func_to_async(
                     self._executor, self.excel_reader.get_create_table_sql, self._curr_table
                 )
-                # 构建聊天历史
+                # 构建聊天历史（限制最近3轮，约6条消息）
                 if hasattr(self, "history_messages") and self.history_messages:
                     current_round_messages = []
                     last_role = None
+                    
+                    # 只取最近6条消息（约3轮对话）
+                    recent_messages = self.history_messages[-6:]
 
-                    for msg in self.history_messages:
+                    for msg in recent_messages:
                         if not hasattr(msg, "content"):
                             continue
 

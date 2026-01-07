@@ -16,9 +16,9 @@ Wants=network-online.target
 [Service]
 Type=simple
 User=adminstrator
-WorkingDirectory=/home/adminstrator/work/Finai
+WorkingDirectory=/home/adminstrator/work/FinAI
 # 设置运行时环境变量
-Environment="PATH=/home/adminstrator/.local/bin:/home/adminstrator/work/Finai/.venv/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin"
+Environment="PATH=/home/adminstrator/.local/bin:/home/adminstrator/work/FinAI/.venv/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin"
 Environment="HOME=/home/adminstrator"
 # 服务启动命令
 ExecStart=/home/adminstrator/.local/bin/uv run python packages/dbgpt-app/src/dbgpt_app/dbgpt_server.py --config configs/dbgpt-proxy-siliconflow.toml

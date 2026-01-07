@@ -82,10 +82,12 @@ const ChatCompletion: React.FC = () => {
     <div className='flex flex-col w-5/6 mx-auto'>
       {!!showMessages.length &&
         showMessages.map((content, index) => {
+          const isLastMessage = index === showMessages.length - 1 && content.role === 'view';
           return (
             <ChatContent
               key={index}
               content={content}
+              isLastMessage={isLastMessage}
               onLinkClick={() => {
                 setJsonModalOpen(true);
                 setJsonValue(JSON.stringify(content?.context, null, 2));
