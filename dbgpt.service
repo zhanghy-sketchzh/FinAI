@@ -8,6 +8,12 @@
 #   启用开机启动：sudo systemctl enable dbgpt
 #   禁用开机启动：sudo systemctl disable dbgpt
 
+# 服务重置命令
+# 1. 将修改后的 service 文件复制到 systemd 目录
+# sudo cp /home/adminstrator/work/FinAI/dbgpt.service /etc/systemd/system/
+# 2. 重新加载 systemd 配置
+#sudo systemctl daemon-reload
+
 [Unit]
 Description=DB-GPT Service - 数据库智能对话服务
 After=network.target
