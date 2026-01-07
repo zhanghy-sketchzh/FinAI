@@ -127,6 +127,18 @@ class ChatHistoryDao(BaseDao):
         finally:
             session.close()
 
+    def update_summary_by_uid(self, summary: str, conv_uid: str):
+        """Update the conversation summary (title) by conv_uid."""
+        session = self.get_raw_session()
+        try:
+            chat_history = session.query(ChatHistoryEntity)
+            chat_history = chat_history.filter(ChatHistoryEntity.conv_uid == conv_uid)
+            updated = chat_history.update({ChatHistoryEntity.summary: summary})
+            session.commit()
+            return updated
+        finally:
+            session.close()
+
     def raw_delete(self, conv_uid: str):
         """Delete the chat history record."""
         if conv_uid is None:

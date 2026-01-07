@@ -67,6 +67,7 @@ export type IChatDialogueSchema = {
   select_param: string;
   app_code: string;
   param_need?: ParamNeed[];
+  conversation_title?: string; 
 };
 
 export type UserParam = {

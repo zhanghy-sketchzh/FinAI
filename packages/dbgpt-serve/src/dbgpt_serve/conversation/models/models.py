@@ -80,6 +80,7 @@ class ServeDao(BaseDao[ServeEntity, ServeRequest, ServerResponse]):
             sys_code=entity.sys_code,
             gmt_created=gmt_created,
             gmt_modified=gmt_modified,
+            conversation_title=entity.summary,  # 使用 summary 作为对话标题
         )
 
     def get_latest_message(self, conv_uid: str) -> Optional[MessageStorageItem]:

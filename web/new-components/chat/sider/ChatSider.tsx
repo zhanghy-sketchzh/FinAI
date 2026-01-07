@@ -223,7 +223,8 @@ const ChatSider: React.FC<{
     if (list?.length > 0) {
       return list.map((item: IChatDialogueSchema) => ({
         ...item,
-        label: item.user_input || item.select_param,
+        // 优先使用 conversation_title（对话主题），其次是 user_input，最后是 select_param
+        label: item.conversation_title || item.user_input || item.select_param,
         key: item.conv_uid,
         icon: <AppDefaultIcon scene={item.chat_mode} />,
         default: false,
