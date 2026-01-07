@@ -2,10 +2,10 @@ import { ChatContext } from '@/app/chat-context';
 import { apiInterceptors, newDialogue } from '@/client/api';
 import { ChatContentContext } from '@/pages/chat';
 import { STORAGE_INIT_MESSAGE_KET } from '@/utils';
-import { PlusOutlined } from '@ant-design/icons';
-import { Tag, Typography } from 'antd';
+import { PlusOutlined, QuestionCircleOutlined } from '@ant-design/icons';
+import { Modal, Popover, Tag, Typography } from 'antd';
 import { useRouter } from 'next/router';
-import React, { useCallback, useContext, useMemo } from 'react';
+import React, { useCallback, useContext, useMemo, useState } from 'react';
 import { useTranslation } from 'react-i18next';
 
 import AppDefaultIcon from '../../common/AppDefaultIcon';
@@ -28,6 +28,7 @@ const ChatHeader: React.FC<{ isScrollToTop: boolean }> = ({ isScrollToTop }) => 
   const router = useRouter();
 
   const { t } = useTranslation();
+  const [helpModalVisible, setHelpModalVisible] = useState<boolean>(false);
 
   // 新建会话
   const handleNewChat = useCallback(async () => {
@@ -94,6 +95,13 @@ const ChatHeader: React.FC<{ isScrollToTop: boolean }> = ({ isScrollToTop }) => 
           <div className='flex flex-col flex-1'>
             <div className='flex items-center text-base text-[#1c2533] dark:text-[rgba(255,255,255,0.85)] font-semibold gap-2'>
               <span>{displayAppName}</span>
+              {/* 帮助按钮 */}
+              <Popover content={t('help_doc')}>
+                <QuestionCircleOutlined
+                  className='text-sm text-[#525964] dark:text-[rgba(255,255,255,0.65)] hover:text-blue-500 dark:hover:text-blue-400 cursor-pointer transition-colors'
+                  onClick={() => setHelpModalVisible(true)}
+                />
+              </Popover>
             </div>
             <Typography.Text
               className='text-sm text-[#525964] dark:text-[rgba(255,255,255,0.65)] leading-6'
@@ -162,6 +170,13 @@ const ChatHeader: React.FC<{ isScrollToTop: boolean }> = ({ isScrollToTop }) => 
           </div>
           <div className='flex items-center text-base text-[#1c2533] dark:text-[rgba(255,255,255,0.85)] font-semibold gap-2'>
             <span>{displayAppName}</span>
+            {/* 帮助按钮 */}
+            <Popover content={t('help_doc')}>
+              <QuestionCircleOutlined
+                className='text-sm text-[#525964] dark:text-[rgba(255,255,255,0.65)] hover:text-blue-500 dark:hover:text-blue-400 cursor-pointer transition-colors'
+                onClick={() => setHelpModalVisible(true)}
+              />
+            </Popover>
           </div>
         </div>
         <div className='flex items-center gap-4'>
@@ -179,13 +194,121 @@ const ChatHeader: React.FC<{ isScrollToTop: boolean }> = ({ isScrollToTop }) => 
   };
 
   return (
-    <div
-      className={`h-20 mt-6 ${
-        appInfo?.recommend_questions && appInfo?.recommend_questions?.length > 0 ? 'mb-6' : ''
-      } sticky top-0 bg-transparent z-30 transition-all duration-400 ease-in-out`}
-    >
-      {isScrollToTop ? topHeaderContent() : headerContent()}
-    </div>
+    <>
+      <div
+        className={`h-20 mt-6 ${
+          appInfo?.recommend_questions && appInfo?.recommend_questions?.length > 0 ? 'mb-6' : ''
+        } sticky top-0 bg-transparent z-30 transition-all duration-400 ease-in-out`}
+      >
+        {isScrollToTop ? topHeaderContent() : headerContent()}
+      </div>
+
+      {/* 帮助文档模态窗口 */}
+      <Modal
+        title={t('chat_excel_help_title')}
+        open={helpModalVisible}
+        onCancel={() => setHelpModalVisible(false)}
+        footer={null}
+        width={700}
+        centered
+      >
+        <div className='space-y-4 py-4'>
+          {/* 功能介绍 */}
+          <div>
+            <h3 className='text-base font-semibold mb-2 text-[#1c2533] dark:text-[rgba(255,255,255,0.85)]'>
+              {t('chat_excel_features_title')}
+            </h3>
+            <p className='text-sm text-[#525964] dark:text-[rgba(255,255,255,0.65)] mb-2'>
+              {t('chat_excel_features_desc')}
+            </p>
+            <ul className='list-disc list-inside space-y-1 text-sm text-[#525964] dark:text-[rgba(255,255,255,0.65)]'>
+              <li>{t('chat_excel_feature_1')}</li>
+              <li>{t('chat_excel_feature_2')}</li>
+              <li>{t('chat_excel_feature_3')}</li>
+              <li>{t('chat_excel_feature_4')}</li>
+              <li>{t('chat_excel_feature_5')}</li>
+              <li>{t('chat_excel_feature_6')}</li>
+              <li>{t('chat_excel_feature_7')}</li>
+            </ul>
+          </div>
+
+          {/* 执行流程 */}
+          <div>
+            <h3 className='text-base font-semibold mb-2 text-[#1c2533] dark:text-[rgba(255,255,255,0.85)]'>
+              {t('chat_excel_workflow_title')}
+            </h3>
+            <div className='space-y-3'>
+              <div className='flex items-start gap-3'>
+                <div className='flex items-center justify-center w-6 h-6 rounded-full bg-blue-500 text-white text-xs font-semibold flex-shrink-0 mt-0.5'>
+                  1
+                </div>
+                <div>
+                  <p className='text-sm font-medium text-[#1c2533] dark:text-[rgba(255,255,255,0.85)]'>
+                    {t('chat_excel_step_1_title')}
+                  </p>
+                  <p className='text-xs text-[#525964] dark:text-[rgba(255,255,255,0.65)]'>
+                    {t('chat_excel_step_1_desc')}
+                  </p>
+                </div>
+              </div>
+              <div className='flex items-start gap-3'>
+                <div className='flex items-center justify-center w-6 h-6 rounded-full bg-blue-500 text-white text-xs font-semibold flex-shrink-0 mt-0.5'>
+                  2
+                </div>
+                <div>
+                  <p className='text-sm font-medium text-[#1c2533] dark:text-[rgba(255,255,255,0.85)]'>
+                    {t('chat_excel_step_2_title')}
+                  </p>
+                  <p className='text-xs text-[#525964] dark:text-[rgba(255,255,255,0.65)]'>
+                    {t('chat_excel_step_2_desc')}
+                  </p>
+                </div>
+              </div>
+              <div className='flex items-start gap-3'>
+                <div className='flex items-center justify-center w-6 h-6 rounded-full bg-blue-500 text-white text-xs font-semibold flex-shrink-0 mt-0.5'>
+                  3
+                </div>
+                <div>
+                  <p className='text-sm font-medium text-[#1c2533] dark:text-[rgba(255,255,255,0.85)]'>
+                    {t('chat_excel_step_3_title')}
+                  </p>
+                  <p className='text-xs text-[#525964] dark:text-[rgba(255,255,255,0.65)]'>
+                    {t('chat_excel_step_3_desc')}
+                  </p>
+                </div>
+              </div>
+              <div className='flex items-start gap-3'>
+                <div className='flex items-center justify-center w-6 h-6 rounded-full bg-blue-500 text-white text-xs font-semibold flex-shrink-0 mt-0.5'>
+                  4
+                </div>
+                <div>
+                  <p className='text-sm font-medium text-[#1c2533] dark:text-[rgba(255,255,255,0.85)]'>
+                    {t('chat_excel_step_4_title')}
+                  </p>
+                  <p className='text-xs text-[#525964] dark:text-[rgba(255,255,255,0.65)]'>
+                    {t('chat_excel_step_4_desc')}
+                  </p>
+                </div>
+              </div>
+            </div>
+          </div>
+
+          {/* 使用提示 */}
+          <div>
+            <h3 className='text-base font-semibold mb-2 text-[#1c2533] dark:text-[rgba(255,255,255,0.85)]'>
+              {t('chat_excel_tips_title')}
+            </h3>
+            <ul className='list-disc list-inside space-y-1 text-sm text-[#525964] dark:text-[rgba(255,255,255,0.65)]'>
+              <li>{t('chat_excel_tip_1')}</li>
+              <li>{t('chat_excel_tip_2')}</li>
+              <li>{t('chat_excel_tip_3')}</li>
+              <li>{t('chat_excel_tip_4')}</li>
+              <li>{t('chat_excel_tip_5')}</li>
+            </ul>
+          </div>
+        </div>
+      </Modal>
+    </>
   );
 };
 

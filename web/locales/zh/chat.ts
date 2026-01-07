@@ -72,7 +72,7 @@ export const ChatZh: Resources['translation'] = {
   feedback_success: '反馈成功',
   operation_success: '操作成功',
   // Help Doc
-  help_doc: '帮助文档',
+  help_doc: '使用指南',
   chat_excel_help_title: 'Chat Excel 使用指南',
   chat_excel_features_title: '✨ 功能介绍',
   chat_excel_features_desc: 'Chat Excel 是一个智能数据分析助手，支持通过自然语言与 Excel 数据对话：',
@@ -89,7 +89,7 @@ export const ChatZh: Resources['translation'] = {
   chat_excel_step_2_title: '数据解析',
   chat_excel_step_2_desc: '系统自动解析表结构、识别数据类型，并生成数据理解（首次需要2-3分钟）',
   chat_excel_step_3_title: '提出问题',
-  chat_excel_step_3_desc: '用自然语言描述您的分析需求，系统会自动转换为 SQL 查询',
+  chat_excel_step_3_desc: '用自然语言描述您的分析需求，模型会自动生成代码进行分析',
   chat_excel_step_4_title: '查看结果',
   chat_excel_step_4_desc: '获得分析结果、图表展示和智能解读',
   chat_excel_tips_title: '💡 使用提示',

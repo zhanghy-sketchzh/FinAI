@@ -81,7 +81,7 @@ export const ChatEn = {
   chat_excel_step_2_title: 'Data Parsing',
   chat_excel_step_2_desc: 'The system automatically parses table structure, identifies data types, and generates data understanding (2-3 minutes for first time)',
   chat_excel_step_3_title: 'Ask Questions',
-  chat_excel_step_3_desc: 'Describe your analysis needs in natural language, and the system will automatically convert them to SQL queries',
+  chat_excel_step_3_desc: 'Describe your analysis needs in natural language, and the model will automatically generate code to analyze',
   chat_excel_step_4_title: 'View Results',
   chat_excel_step_4_desc: 'Get analysis results, chart displays, and intelligent interpretations',
   chat_excel_tips_title: '💡 Tips',
