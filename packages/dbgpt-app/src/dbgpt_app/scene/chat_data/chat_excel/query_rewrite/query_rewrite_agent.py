@@ -371,7 +371,6 @@ class QueryRewriteAgent:
 请严格按照以下JSON格式输出：
 {{
   "is_relevant": true,  // 布尔值，表示用户问题是否与数据表分析相关。如果是闲聊（如"今天天气怎么样"、"你吃饭了吗"）则为false
-  "conversation_title": "对话主题（10字以内，概括当前问题的核心内容，如：销售额分析、利润排名、员工统计）",
   "rewritten_query": "改写后的完整问题，明确指出需要分析的维度和指标",
   "relevant_columns": [
     {{
@@ -398,12 +397,6 @@ class QueryRewriteAgent:
 - 如果是数据分析问题（如"销售额是多少"、"利润排名"、"同比增长"等），设为 true
 - 如果是闲聊或与数据表无关的问题（如"今天天气怎么样"、"你吃饭了吗"、"讲个笑话"等），设为 false
 - 当 is_relevant 为 false 时，其他字段可以简化或省略
-
-**关于 conversation_title 的说明**：
-- 用10个字以内概括当前问题的核心分析主题
-- 应该简洁明了，便于用户在对话列表中快速识别
-- 示例："销售额趋势"、"利润排名分析"、"员工数量统计"、"区域对比"
-- 如果有历史对话，应结合历史上下文生成更准确的主题
 
 **关于 domain_knowledge 的说明**：
 - 只有当用户明确纠正、补充或说明了某个字段的使用方法时才需要填写
@@ -447,7 +440,6 @@ class QueryRewriteAgent:
 Please strictly follow the following JSON format:
 {{
   "is_relevant": true,  // Boolean value indicating whether the user's question is related to data table analysis. If it's small talk (e.g., "How's the weather today", "Did you eat"), set to false
-  "conversation_title": "Conversation topic (within 10 characters, summarizing the core content of the current question, e.g., Sales Analysis, Profit Ranking, Employee Stats)",
   "rewritten_query": "The enhanced complete question, clearly indicating the dimensions and indicators to be analyzed",
   "relevant_columns": [
     {{
@@ -475,12 +467,6 @@ Please strictly follow the following JSON format:
 - If it's a data analysis question (e.g., "What is the sales amount", "Profit ranking", "Year-over-year growth"), set to true
 - If it's small talk or unrelated to the data table (e.g., "How's the weather today", "Did you eat", "Tell me a joke"), set to false
 - When is_relevant is false, other fields can be simplified or omitted
-
-**About conversation_title**:
-- Summarize the core analysis topic of the current question in 10 characters or less
-- Should be concise and clear for users to quickly identify in the conversation list
-- Examples: "Sales Trend", "Profit Ranking", "Employee Count", "Region Compare"
-- If there is historical conversation, combine the historical context to generate a more accurate topic
 
 **About domain_knowledge**:
 - Only fill in when the user explicitly corrects, supplements, or explains the usage method of a field
@@ -623,8 +609,6 @@ Now please combine the historical context and the user's current question, analy
                 if not result.get("rewritten_query"):
                     logger.error("JSON缺少必要字段 'rewritten_query'")
                     raise JSONParseError("JSON缺少必要字段 'rewritten_query'")
-                
-                # conversation_title 由 LLM 生成，如果没有则不设置（前端会使用 user_input 作为默认值）
 
                 # 验证 relevant_columns 格式
                 relevant_columns = result.get("relevant_columns", [])

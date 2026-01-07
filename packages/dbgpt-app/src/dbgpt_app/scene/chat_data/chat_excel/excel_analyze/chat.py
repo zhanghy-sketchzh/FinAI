@@ -1063,22 +1063,6 @@ class ChatExcel(BaseChat):
                         rewrite_result = chunk
                         self._query_rewrite_result = rewrite_result
                         
-                        # 更新对话标题（conversation_title）
-                        conversation_title = rewrite_result.get("conversation_title")
-                        logger.info(f"📝 rewrite_result 中的 conversation_title: {conversation_title}")
-                        if conversation_title:
-                            try:
-                                from dbgpt.storage.chat_history.chat_history_db import ChatHistoryDao
-                                chat_history_dao = ChatHistoryDao()
-                                updated_count = chat_history_dao.update_summary_by_uid(
-                                    conversation_title, self.chat_param.chat_session_id
-                                )
-                                logger.info(f"✅ 更新对话标题: {conversation_title}, conv_uid: {self.chat_param.chat_session_id}, 更新行数: {updated_count}")
-                            except Exception as title_e:
-                                logger.warning(f"❌ 更新对话标题失败: {title_e}", exc_info=True)
-                        else:
-                            logger.info("⚠️ conversation_title 为空，不更新对话标题")
-                        
                         # 检查问题是否与数据表相关
                         is_relevant = rewrite_result.get("is_relevant", True)
                         if not is_relevant:

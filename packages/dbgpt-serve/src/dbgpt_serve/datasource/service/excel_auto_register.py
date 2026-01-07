@@ -2,7 +2,6 @@
 """
 Excel 自动注册到数据源服务
 支持自动缓存和增量导入
-支持 .xlsx 和 .xls 格式
 """
 # ruff: noqa: E501
 
@@ -17,14 +16,6 @@ from typing import Dict, List, Optional, Tuple
 
 import openpyxl
 import pandas as pd
-
-# 尝试导入 xlrd 以支持 .xls 格式
-try:
-    import xlrd
-    HAS_XLRD = True
-except ImportError:
-    HAS_XLRD = False
-    xlrd = None
 
 logger = logging.getLogger(__name__)
 
@@ -399,6 +390,61 @@ class ExcelAutoRegisterService:
             if model_name is not None:
                 self.model_name = model_name
 
+    def _read_excel_file(self, excel_file_path: str, sheet_name=None, header=None) -> pd.DataFrame:
+        """
+        智能读取 Excel 文件，支持 .xls 和 .xlsx 格式
+        
+        Args:
+            excel_file_path: Excel 文件路径
+            sheet_name: sheet 名称
+            header: 表头行索引
+            
+        Returns:
+            DataFrame
+        """
+        file_ext = Path(excel_file_path).suffix.lower()
+        
+        try:
+            if file_ext == '.xls':
+                # 使用 xlrd 引擎读取旧版 .xls 文件
+                logger.info(f"检测到 .xls 格式，使用 xlrd 引擎读取")
+                return pd.read_excel(
+                    excel_file_path, 
+                    sheet_name=sheet_name, 
+                    header=header,
+                    engine='xlrd'
+                )
+            else:
+                # 使用默认的 openpyxl 引擎读取 .xlsx 文件
+                return pd.read_excel(
+                    excel_file_path, 
+                    sheet_name=sheet_name, 
+                    header=header
+                )
+        except Exception as e:
+            logger.error(f"读取 Excel 文件失败: {e}")
+            # 如果默认方式失败，尝试另一种引擎
+            try:
+                if file_ext == '.xls':
+                    logger.warning(f"xlrd 读取失败，尝试使用 openpyxl")
+                    return pd.read_excel(
+                        excel_file_path, 
+                        sheet_name=sheet_name, 
+                        header=header,
+                        engine='openpyxl'
+                    )
+                else:
+                    logger.warning(f"openpyxl 读取失败，尝试使用 xlrd")
+                    return pd.read_excel(
+                        excel_file_path, 
+                        sheet_name=sheet_name, 
+                        header=header,
+                        engine='xlrd'
+                    )
+            except Exception as e2:
+                logger.error(f"所有引擎都无法读取文件: {e2}")
+                raise Exception(f"无法读取 Excel 文件 {excel_file_path}: {e2}")
+
     def _get_cell_value(self, cell) -> Optional[str]:
         """获取单元格值，处理公式"""
         if cell.value is None:
@@ -437,134 +483,6 @@ class ExcelAutoRegisterService:
                 return f"theme_{fg_color.theme}_{tint:.2f}"
         return None
 
-    def _is_xls_format(self, file_path: str) -> bool:
-        """检查文件是否为 .xls 格式（旧版 Excel 格式）"""
-        return file_path.lower().endswith('.xls') and not file_path.lower().endswith('.xlsx')
-
-    def _detect_header_rows_with_color_xls(
-        self, excel_file_path: str, sheet_name: str = None
-    ) -> Tuple[List[int], Dict]:
-        """使用 xlrd 处理 .xls 格式文件的表头检测
-        
-        注意：xlrd 对颜色信息的支持有限，主要依赖数据内容进行检测
-        """
-        if not HAS_XLRD:
-            raise ImportError("需要安装 xlrd 库来处理 .xls 格式文件: pip install xlrd")
-        
-        wb = xlrd.open_workbook(excel_file_path, formatting_info=True)
-        
-        if sheet_name:
-            ws = wb.sheet_by_name(sheet_name)
-        else:
-            ws = wb.sheet_by_index(0)
-        
-        max_check_rows = min(20, ws.nrows)
-        max_cols = ws.ncols
-        
-        rows_data = []
-        rows_colors = []
-        
-        for row_idx in range(max_check_rows):
-            row_values = []
-            row_colors = []
-            for col_idx in range(max_cols):
-                try:
-                    cell = ws.cell(row_idx, col_idx)
-                    cell_value = self._get_cell_value_xls(cell, wb)
-                    row_values.append(cell_value if cell_value is not None else "")
-                    # xlrd 获取颜色信息比较复杂，这里简化处理
-                    row_colors.append(self._get_cell_bg_color_xls(cell, wb, ws, row_idx, col_idx))
-                except Exception as e:
-                    logger.debug(f"读取单元格失败 ({row_idx}, {col_idx}): {e}")
-                    row_values.append("")
-                    row_colors.append(None)
-            rows_data.append(row_values)
-            rows_colors.append(row_colors)
-        
-        if self.llm_client:
-            try:
-                header_rows = self._detect_header_rows_with_llm_and_color(
-                    rows_data, rows_colors
-                )
-                if header_rows:
-                    color_info = {
-                        "rows_data": rows_data,
-                        "rows_colors": rows_colors,
-                        "header_rows": header_rows,
-                        "max_cols": max_cols,
-                    }
-                    return header_rows, color_info
-            except Exception as e:
-                logger.warning(f"LLM检测失败: {e}")
-        
-        df_raw = pd.DataFrame(rows_data)
-        header_rows = self._detect_header_rows_rule_based(df_raw)
-        color_info = {
-            "rows_data": rows_data,
-            "rows_colors": rows_colors,
-            "header_rows": header_rows,
-            "max_cols": max_cols,
-        }
-        return header_rows, color_info
-
-    def _get_cell_value_xls(self, cell, workbook) -> Optional[str]:
-        """获取 xls 格式单元格的值"""
-        if cell.value is None or cell.value == "":
-            return None
-        
-        # 处理不同类型的单元格
-        if cell.ctype == xlrd.XL_CELL_EMPTY:
-            return None
-        elif cell.ctype == xlrd.XL_CELL_TEXT:
-            value_str = str(cell.value)
-        elif cell.ctype == xlrd.XL_CELL_NUMBER:
-            # 检查是否为整数
-            if cell.value == int(cell.value):
-                value_str = str(int(cell.value))
-            else:
-                value_str = str(cell.value)
-        elif cell.ctype == xlrd.XL_CELL_DATE:
-            try:
-                date_tuple = xlrd.xldate_as_tuple(cell.value, workbook.datemode)
-                from datetime import datetime
-                dt = datetime(*date_tuple)
-                value_str = dt.strftime("%Y-%m-%d")
-            except Exception:
-                value_str = str(cell.value)
-        elif cell.ctype == xlrd.XL_CELL_BOOLEAN:
-            value_str = str(bool(cell.value))
-        elif cell.ctype == xlrd.XL_CELL_ERROR:
-            return None
-        else:
-            value_str = str(cell.value)
-        
-        # 清理特殊字符
-        return (
-            value_str.replace("\n", "")
-            .replace("\r", "")
-            .replace("\t", "")
-            .replace(" ", "")
-        )
-
-    def _get_cell_bg_color_xls(self, cell, workbook, sheet, row_idx, col_idx) -> Optional[str]:
-        """获取 xls 格式单元格的背景色
-        
-        注意：xlrd 的颜色处理比较复杂，这里返回简化的颜色标识
-        """
-        try:
-            xf_index = sheet.cell_xf_index(row_idx, col_idx)
-            xf = workbook.xf_list[xf_index]
-            
-            # 获取背景色索引
-            pattern_colour_index = xf.background.pattern_colour_index
-            
-            if pattern_colour_index and pattern_colour_index != 64:  # 64 表示无背景色
-                return f"indexed_{pattern_colour_index}"
-            
-            return None
-        except Exception:
-            return None
-
     def _detect_header_rows_with_color(
         self, excel_file_path: str, sheet_name: str = None
     ) -> Tuple[List[int], Dict]:
@@ -574,11 +492,18 @@ class ExcelAutoRegisterService:
             excel_file_path: Excel文件路径
             sheet_name: sheet名称，如果为None则使用active sheet
         """
-        # 检查是否为 .xls 格式
-        if self._is_xls_format(excel_file_path):
-            return self._detect_header_rows_with_color_xls(excel_file_path, sheet_name)
+        file_ext = Path(excel_file_path).suffix.lower()
         
-        # .xlsx 格式使用 openpyxl
+        # .xls 文件不支持 openpyxl，跳过颜色检测，使用简单的规则
+        if file_ext == '.xls':
+            logger.info("检测到 .xls 格式，跳过颜色检测，使用简单规则")
+            # 读取前几行数据
+            df_preview = self._read_excel_file(excel_file_path, sheet_name=sheet_name, header=None)
+            # 假设前1-2行是表头
+            if len(df_preview) > 0:
+                return [0], {"method": "simple_rule_for_xls"}
+            return [0], {"method": "default"}
+        
         wb = openpyxl.load_workbook(excel_file_path)
         ws = wb[sheet_name] if sheet_name else wb.active
 
@@ -1541,20 +1466,12 @@ class ExcelAutoRegisterService:
         if original_filename is None:
             original_filename = Path(excel_file_path).name
 
-        # 根据文件格式选择合适的引擎读取 Excel
-        is_xls = self._is_xls_format(excel_file_path)
-        if is_xls:
-            if not HAS_XLRD:
-                raise ImportError(
-                    "需要安装 xlrd 库来处理 .xls 格式文件: pip install xlrd\n"
-                    "或者将文件转换为 .xlsx 格式"
-                )
-            excel_engine = "xlrd"
-        else:
-            excel_engine = "openpyxl"
-        
         # 读取Excel获取sheet信息
-        excel_file = pd.ExcelFile(excel_file_path, engine=excel_engine)
+        file_ext = Path(excel_file_path).suffix.lower()
+        if file_ext == '.xls':
+            excel_file = pd.ExcelFile(excel_file_path, engine='xlrd')
+        else:
+            excel_file = pd.ExcelFile(excel_file_path)
         all_sheet_names = excel_file.sheet_names
 
         # 确定要处理的sheet
@@ -1647,8 +1564,8 @@ class ExcelAutoRegisterService:
 
             for sheet_name in target_sheets:
                 logger.info(f"  处理 sheet: {sheet_name}")
-                df_raw = pd.read_excel(
-                    excel_file_path, sheet_name=sheet_name, header=None, engine=excel_engine
+                df_raw = self._read_excel_file(
+                    excel_file_path, sheet_name=sheet_name, header=None
                 )
                 df_processed = self._process_multi_level_header(
                     df_raw, excel_file_path, sheet_name
@@ -1661,8 +1578,8 @@ class ExcelAutoRegisterService:
             # 只处理第一个sheet（原有逻辑）
             target_sheet = target_sheets[0]
             logger.info(f"📄 处理单个sheet: {target_sheet}")
-            df_raw = pd.read_excel(
-                excel_file_path, sheet_name=target_sheet, header=None, engine=excel_engine
+            df_raw = self._read_excel_file(
+                excel_file_path, sheet_name=target_sheet, header=None
             )
             df = self._process_multi_level_header(df_raw, excel_file_path, target_sheet)
 
