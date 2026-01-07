@@ -406,8 +406,16 @@ async def file_upload(
                         worker_manager = get_worker_manager()
                         llm_client = DefaultLLMClient(worker_manager)
 
-                        # 获取当前配置的默认模型名称
-                        default_model = model_name or CFG.LLM_MODEL
+                        # 从 worker_manager 获取实际可用的模型名称
+                        if model_name:
+                            default_model = model_name
+                        else:
+                            # 获取当前可用的模型列表
+                            available_models = worker_manager.sync_supported_models()
+                            if available_models and len(available_models) > 0:
+                                default_model = available_models[0].model
+                            else:
+                                default_model = CFG.LLM_MODEL
 
                         logger.info(f"✅ 成功获取LLM客户端，使用模型: {default_model}")
                     except Exception as e:

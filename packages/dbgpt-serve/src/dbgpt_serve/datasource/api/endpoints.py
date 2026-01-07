@@ -1,3 +1,4 @@
+import logging
 import os
 import tempfile
 from functools import cache
@@ -19,11 +20,38 @@ from dbgpt_serve.datasource.config import SERVE_SERVICE_COMPONENT_NAME, ServeCon
 from dbgpt_serve.datasource.service.excel_auto_register import ExcelAutoRegisterService
 from dbgpt_serve.datasource.service.service import Service
 
+logger = logging.getLogger(__name__)
+
 router = APIRouter()
 
 # Add your API endpoints here
 
 global_system_app: Optional[SystemApp] = None
+
+
+def _get_llm_client_and_model():
+    """获取 LLM 客户端和模型名称"""
+    try:
+        from dbgpt.model.cluster import WorkerManagerFactory
+        from dbgpt.model.cluster.client import DefaultLLMClient
+        from dbgpt.component import ComponentType
+        
+        worker_manager = global_system_app.get_component(
+            ComponentType.WORKER_MANAGER_FACTORY, WorkerManagerFactory
+        ).create()
+        
+        llm_client = DefaultLLMClient(worker_manager, auto_convert_message=True)
+        
+        # 获取可用模型
+        models = worker_manager.sync_supported_models()
+        if models and len(models) > 0:
+            model_name = models[0].model
+            logger.info(f"获取到可用模型: {model_name}")
+            return llm_client, model_name
+    except Exception as e:
+        logger.warning(f"获取 LLM 客户端失败: {e}")
+    
+    return None, None
 
 
 def get_service() -> Service:
@@ -335,8 +363,13 @@ async def upload_excel(
             temp_file.write(content)
             temp_file_path = temp_file.name
 
+        # 获取 LLM 客户端和模型
+        llm_client, model_name = _get_llm_client_and_model()
+        
         # 处理 Excel
-        excel_service = ExcelAutoRegisterService()
+        excel_service = ExcelAutoRegisterService(
+            llm_client=llm_client, model_name=model_name
+        )
         result = await blocking_func_to_async(
             global_system_app,
             excel_service.process_excel,

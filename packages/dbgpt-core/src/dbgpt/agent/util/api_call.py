@@ -313,6 +313,22 @@ class ApiCall:
             result = ET.tostring(api_call_element, encoding="utf-8")
             return result.decode("utf-8")
 
+    def _detect_id_columns(self, columns: List[str]) -> List[str]:
+        """检测 ID 列（标识符列）"""
+        id_keywords = [
+            "id", "ID", "Id", "编号", "工号", "员工号", "学号", "订单号",
+            "编码", "代码", "号码", "身份证", "手机", "电话", "code", "Code", "CODE",
+            "no", "No", "NO", "num", "Num", "NUM", "number", "Number"
+        ]
+        id_columns = []
+        for col in columns:
+            col_lower = col.lower()
+            for keyword in id_keywords:
+                if keyword.lower() in col_lower:
+                    id_columns.append(col)
+                    break
+        return id_columns
+
     def _to_antv_vis_param(self, api_status: PluginStatus):
         param = {}
         if api_status.name:
@@ -324,6 +340,14 @@ class ApiCall:
         if api_status.api_result:
             data = api_status.api_result
         param["data"] = data
+        
+        # 检测并传递 ID 列信息
+        if data and len(data) > 0 and isinstance(data[0], dict):
+            columns = list(data[0].keys())
+            id_columns = self._detect_id_columns(columns)
+            if id_columns:
+                param["id_columns"] = id_columns
+        
         return json.dumps(param, ensure_ascii=False)
 
     def run_display_sql(self, llm_text, sql_run_func):

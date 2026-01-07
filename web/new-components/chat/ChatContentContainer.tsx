@@ -194,7 +194,35 @@ const ChatContentContainer = ({ className }: { className?: string }, ref: React.
     }
   }, [history.length, lastMessage?.context, lastMessage?.thinking, lastMessage?.role, scrollToBottomSmooth]);
 
+  // Track if we're in streaming mode (receiving new message content)
+  const isStreamingRef = useRef<boolean>(false);
+  const streamingTimeoutRef = useRef<NodeJS.Timeout | null>(null);
+
+  // Set streaming mode when message content changes
+  useEffect(() => {
+    if (lastMessage?.context) {
+      isStreamingRef.current = true;
+      
+      // Clear previous timeout
+      if (streamingTimeoutRef.current) {
+        clearTimeout(streamingTimeoutRef.current);
+      }
+      
+      // Exit streaming mode after content stops changing for 1 second
+      streamingTimeoutRef.current = setTimeout(() => {
+        isStreamingRef.current = false;
+      }, 1000);
+    }
+    
+    return () => {
+      if (streamingTimeoutRef.current) {
+        clearTimeout(streamingTimeoutRef.current);
+      }
+    };
+  }, [lastMessage?.context]);
+
   // Use ResizeObserver and MutationObserver to detect when content changes
+  // Only scroll during streaming mode to avoid scrolling on pagination/user interactions
   useEffect(() => {
     if (!scrollRef.current) return;
 
@@ -203,6 +231,10 @@ const ChatContentContainer = ({ className }: { className?: string }, ref: React.
 
     const checkAndScroll = () => {
       if (!container) return;
+      
+      // Only auto-scroll during streaming mode
+      // This prevents scrolling when user interacts with pagination, tabs, etc.
+      if (!isStreamingRef.current) return;
       
       const currentScrollHeight = container.scrollHeight;
       const hasNewContent = currentScrollHeight !== lastScrollHeightRef.current;
@@ -214,7 +246,7 @@ const ChatContentContainer = ({ className }: { className?: string }, ref: React.
         if (allowAutoScroll.current) {
           // Use multiple attempts to ensure scroll happens after DOM updates
           scrollTimer = setTimeout(() => {
-            if (container) {
+            if (container && isStreamingRef.current) {
               container.scrollTo({
                 top: container.scrollHeight,
                 behavior: 'smooth',
@@ -224,7 +256,7 @@ const ChatContentContainer = ({ className }: { className?: string }, ref: React.
           
           // Also try immediate scroll
           requestAnimationFrame(() => {
-            if (container) {
+            if (container && isStreamingRef.current) {
               container.scrollTo({
                 top: container.scrollHeight,
                 behavior: 'auto',
@@ -254,7 +286,9 @@ const ChatContentContainer = ({ className }: { className?: string }, ref: React.
 
     // Also check periodically during streaming
     const intervalId = setInterval(() => {
-      checkAndScroll();
+      if (isStreamingRef.current) {
+        checkAndScroll();
+      }
     }, 200);
 
     return () => {

@@ -65,6 +65,7 @@ class ExcelCacheManager:
                 columns_info TEXT NOT NULL,
                 summary_prompt TEXT,
                 data_schema_json TEXT,
+                id_columns TEXT,
                 created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
                 last_accessed TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
                 access_count INTEGER DEFAULT 0
@@ -76,6 +77,13 @@ class ExcelCacheManager:
         except sqlite3.OperationalError:
             cursor.execute(
                 "ALTER TABLE excel_metadata ADD COLUMN data_schema_json TEXT"
+            )
+        
+        try:
+            cursor.execute("SELECT id_columns FROM excel_metadata LIMIT 1")
+        except sqlite3.OperationalError:
+            cursor.execute(
+                "ALTER TABLE excel_metadata ADD COLUMN id_columns TEXT"
             )
 
         conn.commit()
@@ -131,46 +139,35 @@ class ExcelCacheManager:
         return sha256_hash.hexdigest()
 
     def get_cached_info(self, content_hash: str) -> Optional[Dict]:
-        """
-        根据内容哈希获取缓存信息
-
-        Args:
-            content_hash: 内容哈希值
-
-        Returns:
-            缓存信息字典，如果不存在则返回 None
-        """
+        """根据内容哈希获取缓存信息"""
         conn = sqlite3.connect(str(self.meta_db_path))
         cursor = conn.cursor()
-
+        
         cursor.execute(
             """
             SELECT 
                 content_hash, original_filename, table_name, db_name, db_path,
                 row_count, column_count, columns_info, summary_prompt, data_schema_json,
-                created_at, last_accessed, access_count
+                id_columns, created_at, last_accessed, access_count
             FROM excel_metadata
             WHERE content_hash = ?
         """,
             (content_hash,),
         )
-
         row = cursor.fetchone()
 
         if row:
-            # 更新访问统计
             cursor.execute(
                 """
                 UPDATE excel_metadata
-                SET last_accessed = CURRENT_TIMESTAMP,
-                    access_count = access_count + 1
+                SET last_accessed = CURRENT_TIMESTAMP, access_count = access_count + 1
                 WHERE content_hash = ?
             """,
                 (content_hash,),
             )
             conn.commit()
-
-            result = {
+            conn.close()
+            return {
                 "content_hash": row[0],
                 "original_filename": row[1],
                 "table_name": row[2],
@@ -181,12 +178,11 @@ class ExcelCacheManager:
                 "columns_info": json.loads(row[7]),
                 "summary_prompt": row[8],
                 "data_schema_json": row[9],
-                "created_at": row[10],
-                "last_accessed": row[11],
-                "access_count": row[12],
+                "id_columns": json.loads(row[10]) if row[10] else [],
+                "created_at": row[11],
+                "last_accessed": row[12],
+                "access_count": row[13],
             }
-            conn.close()
-            return result
 
         conn.close()
         return None
@@ -201,6 +197,7 @@ class ExcelCacheManager:
         df: pd.DataFrame,
         summary_prompt: str = None,
         data_schema_json: str = None,
+        id_columns: List[str] = None,
     ):
         """
         保存缓存信息
@@ -213,6 +210,8 @@ class ExcelCacheManager:
             db_path: 数据库路径
             df: DataFrame 对象
             summary_prompt: 数据理解提示词
+            data_schema_json: 数据schema JSON
+            id_columns: ID列名列表
         """
         conn = sqlite3.connect(str(self.meta_db_path))
         cursor = conn.cursor()
@@ -225,8 +224,8 @@ class ExcelCacheManager:
             """
             INSERT OR REPLACE INTO excel_metadata
             (content_hash, original_filename, table_name, db_name, db_path,
-             row_count, column_count, columns_info, summary_prompt, data_schema_json)
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+             row_count, column_count, columns_info, summary_prompt, data_schema_json, id_columns)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
         """,
             (
                 content_hash,
@@ -239,6 +238,7 @@ class ExcelCacheManager:
                 json.dumps(columns_info, ensure_ascii=False),
                 summary_prompt,
                 data_schema_json,
+                json.dumps(id_columns if id_columns else [], ensure_ascii=False),
             ),
         )
 
@@ -369,12 +369,13 @@ class ExcelAutoRegisterService:
                     cls._instance = super().__new__(cls)
         return cls._instance
 
-    def __init__(self, llm_client=None, model_name=None):
+    def __init__(self, llm_client=None, model_name=None, system_app=None):
         """初始化服务"""
         if not hasattr(self, "_initialized"):
             self.cache_manager = ExcelCacheManager()
             self.llm_client = llm_client
             self.model_name = model_name
+            self._system_app = system_app
 
             current_dir = Path(__file__).parent
             base_dir = (
@@ -389,58 +390,49 @@ class ExcelAutoRegisterService:
                 self.llm_client = llm_client
             if model_name is not None:
                 self.model_name = model_name
+            if system_app is not None:
+                self._system_app = system_app
             # 如果当前 model_name 还是 None，尝试获取默认模型
             elif self.model_name is None:
                 self.model_name = self._get_default_model_name()
 
+    def _get_llm_client_and_model(self):
+        """获取 LLM 客户端和模型名称"""
+        if hasattr(self, '_system_app') and self._system_app is not None:
+            try:
+                from dbgpt.component import ComponentType
+                from dbgpt.model.cluster import WorkerManagerFactory
+                from dbgpt.model.cluster.client import DefaultLLMClient
+                
+                worker_manager = self._system_app.get_component(
+                    ComponentType.WORKER_MANAGER_FACTORY, WorkerManagerFactory
+                ).create()
+                models = worker_manager.sync_supported_models()
+                if models:
+                    return DefaultLLMClient(worker_manager, auto_convert_message=True), models[0].model
+            except Exception as e:
+                logger.warning(f"获取LLM客户端失败: {e}")
+        return None, None
+    
     def _get_default_model_name(self) -> Optional[str]:
-        """
-        从配置中获取默认的 LLM 模型名称
-        
-        Returns:
-            默认模型名称，如果无法获取则返回 None
-        """
-        try:
-            # 尝试从 dbgpt 配置中获取默认模型
-            from dbgpt._private.config import Config
-            cfg = Config()
-            if cfg.LLM_MODEL and cfg.LLM_MODEL != "proxyllm":
-                logger.info(f"使用配置中的默认模型: {cfg.LLM_MODEL}")
-                return cfg.LLM_MODEL
-        except Exception as e:
-            logger.warning(f"无法从配置获取默认模型: {e}")
-        
-        return None
+        """获取默认的 LLM 模型名称"""
+        _, model_name = self._get_llm_client_and_model()
+        return model_name
 
     def _remove_excel_filters(self, excel_file_path: str) -> str:
-        """
-        去除 Excel 文件的筛选状态，返回处理后的文件路径
-        
-        使用直接操作 XML 的方式，避免 openpyxl 解析筛选条件时的兼容性问题
-        
-        Args:
-            excel_file_path: Excel 文件路径
-            
-        Returns:
-            处理后的文件路径
-        """
+        """去除 Excel 文件的筛选状态"""
         import zipfile
         import tempfile
         import shutil
         import re
         
         file_ext = Path(excel_file_path).suffix.lower()
-        
-        # .xls 格式不是 zip 包，跳过处理
         if file_ext == '.xls':
-            logger.info("检测到 .xls 格式，跳过筛选去除")
             return excel_file_path
         
         try:
-            # xlsx 文件本质是一个 zip 包，直接操作 XML 内容
             temp_dir = tempfile.mkdtemp()
             temp_xlsx = os.path.join(temp_dir, "temp_output.xlsx")
-            
             filters_removed = False
             
             with zipfile.ZipFile(excel_file_path, 'r') as zip_in:
@@ -448,79 +440,43 @@ class ExcelAutoRegisterService:
                     for item in zip_in.namelist():
                         data = zip_in.read(item)
                         
-                        # 处理工作表文件 (xl/worksheets/sheet*.xml)
                         if item.startswith('xl/worksheets/sheet') and item.endswith('.xml'):
                             content = data.decode('utf-8')
                             original_content = content
                             
-                            # 删除 autoFilter 元素（包含筛选条件）
-                            # 匹配 <autoFilter ... /> 或 <autoFilter ...>...</autoFilter>
-                            content = re.sub(
-                                r'<autoFilter[^>]*/>',
-                                '',
-                                content
-                            )
-                            content = re.sub(
-                                r'<autoFilter[^>]*>.*?</autoFilter>',
-                                '',
-                                content,
-                                flags=re.DOTALL
-                            )
-                            
-                            # 删除行的 hidden 属性（取消隐藏被筛选隐藏的行）
-                            # 将 <row ... hidden="1" ...> 中的 hidden="1" 删除
-                            content = re.sub(
-                                r'(<row[^>]*)\s+hidden="1"([^>]*>)',
-                                r'\1\2',
-                                content
-                            )
-                            content = re.sub(
-                                r'(<row[^>]*)\s+hidden="true"([^>]*>)',
-                                r'\1\2',
-                                content,
-                                flags=re.IGNORECASE
-                            )
+                            # 删除 autoFilter 和 hidden 属性
+                            content = re.sub(r'<autoFilter[^>]*/>', '', content)
+                            content = re.sub(r'<autoFilter[^>]*>.*?</autoFilter>', '', content, flags=re.DOTALL)
+                            content = re.sub(r'(<row[^>]*)\s+hidden="1"([^>]*>)', r'\1\2', content)
+                            content = re.sub(r'(<row[^>]*)\s+hidden="true"([^>]*>)', r'\1\2', content, flags=re.IGNORECASE)
                             
                             if content != original_content:
                                 filters_removed = True
-                                logger.info(f"已从 {item} 中移除筛选和隐藏行")
-                            
                             data = content.encode('utf-8')
                         
                         zip_out.writestr(item, data)
             
             if filters_removed:
-                # 替换原文件
                 shutil.move(temp_xlsx, excel_file_path)
-                logger.info(f"已去除 Excel 文件的筛选状态: {excel_file_path}")
             else:
-                # 没有修改，删除临时文件
                 os.remove(temp_xlsx)
-            
-            # 清理临时目录
             shutil.rmtree(temp_dir, ignore_errors=True)
-            
             return excel_file_path
             
         except Exception as e:
-            logger.warning(f"去除 Excel 筛选状态失败（XML方式），尝试 openpyxl 方式: {e}")
-            # 回退到 openpyxl 方式
+            logger.warning(f"去除筛选失败，尝试openpyxl: {e}")
             return self._remove_excel_filters_openpyxl(excel_file_path)
     
     def _remove_excel_filters_openpyxl(self, excel_file_path: str) -> str:
-        """
-        使用 openpyxl 去除 Excel 文件的筛选状态（备用方案）
-        """
+        """使用 openpyxl 去除筛选状态（备用方案）"""
         try:
             wb = openpyxl.load_workbook(excel_file_path)
             filters_removed = False
             
             for ws in wb.worksheets:
                 if ws.auto_filter and ws.auto_filter.ref:
-                    logger.info(f"去除工作表 '{ws.title}' 的筛选状态")
                     ws.auto_filter.ref = None
                     filters_removed = True
-                
                 for row in ws.row_dimensions:
                     if ws.row_dimensions[row].hidden:
                         ws.row_dimensions[row].hidden = False
@@ -528,13 +484,10 @@ class ExcelAutoRegisterService:
             
             if filters_removed:
                 wb.save(excel_file_path)
-                logger.info(f"已去除 Excel 文件的筛选状态 (openpyxl): {excel_file_path}")
-            
             wb.close()
             return excel_file_path
-            
         except Exception as e:
-            logger.warning(f"openpyxl 去除筛选也失败，继续使用原文件: {e}")
+            logger.warning(f"openpyxl去除筛选失败: {e}")
             return excel_file_path
 
     def _read_excel_file(self, excel_file_path: str, sheet_name=None, header=None) -> pd.DataFrame:
@@ -813,7 +766,7 @@ class ExcelAutoRegisterService:
         # 调用LLM（非流式）
         request_params = {
             "messages": [ModelMessage(role=ModelMessageRoleType.HUMAN, content=prompt)],
-            "temperature": 0.1,
+            "temperature": 0,
             "max_new_tokens": 1000,
             "context": ModelRequestContext(stream=False),
         }
@@ -1194,7 +1147,85 @@ class ExcelAutoRegisterService:
 
         return df_formatted
 
-    def _convert_column_types(self, df: pd.DataFrame) -> pd.DataFrame:
+    def _detect_id_columns_with_llm(self, df: pd.DataFrame, table_name: str) -> List[str]:
+        """使用 LLM 识别 ID 列"""
+        if not self.llm_client:
+            raise ValueError("LLM客户端未配置，无法识别ID列")
+        
+        import asyncio
+        import inspect
+        from dbgpt.core import ModelMessage, ModelMessageRoleType, ModelRequest
+        
+        # 构建列信息
+        columns_info = []
+        for col in df.columns:
+            sample_values = df[col].dropna().head(5).tolist()
+            sample_str = ", ".join([str(v) for v in sample_values])[:100]
+            columns_info.append(f"  - {col} (唯一值: {len(df[col].dropna().unique())}, 示例: {sample_str})")
+        
+        prompt = f"""分析数据表字段，识别ID列（标识符列，如员工ID、订单号、编码等）。
+
+表名: {table_name}
+字段:
+{chr(10).join(columns_info)}
+
+返回JSON: {{"id_columns": ["列名1", "列名2"]}}
+无ID列返回: {{"id_columns": []}}"""
+
+        request = ModelRequest(
+            model=self.model_name,
+            messages=[ModelMessage(role=ModelMessageRoleType.HUMAN, content=prompt)],
+            temperature=0,
+            max_new_tokens=500,
+        )
+        stream_response = self.llm_client.generate_stream(request)
+        
+        full_text = ""
+        if inspect.isasyncgen(stream_response):
+            async def collect():
+                text = ""
+                async for chunk in stream_response:
+                    text = self._extract_chunk_text(chunk) or text
+                return text
+            loop = asyncio.new_event_loop()
+            try:
+                full_text = loop.run_until_complete(collect())
+            finally:
+                loop.close()
+        elif inspect.isgenerator(stream_response):
+            for chunk in stream_response:
+                full_text = self._extract_chunk_text(chunk) or full_text
+        
+        try:
+            start, end = full_text.find("{"), full_text.rfind("}") + 1
+            if start >= 0 and end > start:
+                result = json.loads(full_text[start:end])
+                return [col for col in result.get("id_columns", []) if col in df.columns]
+        except Exception as e:
+            logger.warning(f"解析ID列JSON失败: {e}")
+        return []
+    
+    def _convert_id_columns_to_string(self, df: pd.DataFrame, id_columns: List[str]) -> pd.DataFrame:
+        """将 ID 列转换为字符串类型"""
+        df_converted = df.copy()
+        
+        def convert_to_str(x):
+            if pd.isna(x):
+                return None
+            if isinstance(x, float) and x == int(x):
+                return str(int(x))
+            return str(x)
+        
+        for col in id_columns:
+            if col in df_converted.columns:
+                try:
+                    df_converted[col] = df_converted[col].apply(convert_to_str).astype('object')
+                except Exception as e:
+                    logger.warning(f"转换ID列 '{col}' 失败: {e}")
+        
+        return df_converted
+
+    def _convert_column_types(self, df: pd.DataFrame, id_columns: List[str] = None) -> pd.DataFrame:
         """
         根据字段的实际值进行智能类型转换
 
@@ -1205,13 +1236,21 @@ class ExcelAutoRegisterService:
 
         Args:
             df: 原始DataFrame
+            id_columns: ID 列名列表，这些列跳过数值转换
 
         Returns:
             转换后的DataFrame
         """
+        if id_columns is None:
+            id_columns = []
+        
         df_converted = df.copy()
 
         for col in df_converted.columns:
+            # 跳过 ID 列
+            if col in id_columns:
+                continue
+            
             # 跳过已经是数值类型的列
             if df_converted[col].dtype in ["int64", "float64", "int32", "float32"]:
                 continue
@@ -1346,19 +1385,27 @@ class ExcelAutoRegisterService:
 
         return df_converted
 
-    def _format_numeric_columns(self, df: pd.DataFrame) -> pd.DataFrame:
+    def _format_numeric_columns(self, df: pd.DataFrame, id_columns: List[str] = None) -> pd.DataFrame:
         """
         格式化数值列为两位小数
 
         Args:
             df: 原始DataFrame
+            id_columns: ID 列名列表，这些列跳过格式化
 
         Returns:
             格式化后的DataFrame（数值列保留两位小数）
         """
+        if id_columns is None:
+            id_columns = []
+        
         df_formatted = df.copy()
 
         for col in df_formatted.columns:
+            # 跳过 ID 列
+            if col in id_columns:
+                continue
+            
             # 只处理数值类型的列
             if df_formatted[col].dtype in [
                 "int64",
@@ -1636,10 +1683,8 @@ class ExcelAutoRegisterService:
         if original_filename is None:
             original_filename = Path(excel_file_path).name
 
-        # 首先去除 Excel 文件的筛选状态，确保读取所有数据
-        excel_file_path = self._remove_excel_filters(excel_file_path)
-
-        # 读取Excel获取sheet信息
+        # 先计算原始文件的哈希（在任何修改之前），确保相同文件产生相同哈希
+        # 读取Excel获取sheet信息（用于哈希计算）
         file_ext = Path(excel_file_path).suffix.lower()
         if file_ext == '.xls':
             excel_file = pd.ExcelFile(excel_file_path, engine='xlrd')
@@ -1662,17 +1707,20 @@ class ExcelAutoRegisterService:
             if not target_sheets:
                 raise ValueError(f"指定的sheet都不存在。可用的sheet: {all_sheet_names}")
 
-        # 使用文件级别的哈希（包含sheet信息）
+        # 使用文件级别的哈希（在去除筛选之前计算，确保相同文件产生相同哈希）
         content_hash = self.cache_manager.calculate_file_hash(
             excel_file_path, target_sheets if merge_sheets else None
         )
-        logger.debug(f"文件哈希: {content_hash[:16]}... (文件: {original_filename})")
+        
+        # 去除 Excel 文件的筛选状态
+        excel_file_path = self._remove_excel_filters(excel_file_path)
 
-        # 检查缓存（在读取Excel和处理表头之前）
+        # 检查缓存
         if not force_reimport:
             cached_info = self.cache_manager.get_cached_info(content_hash)
             if cached_info and os.path.exists(cached_info["db_path"]):
-                # 缓存命中，直接返回（无需读取Excel和处理表头）
+                # 缓存命中
+                logger.info(f"缓存命中: {original_filename}")
                 cached_schema_json = cached_info.get("data_schema_json")
 
                 # 为了返回top_10_rows，需要从数据库读取
@@ -1719,6 +1767,7 @@ class ExcelAutoRegisterService:
                     "columns_info": cached_info["columns_info"],
                     "summary_prompt": cached_info["summary_prompt"],
                     "data_schema_json": cached_schema_json,
+                    "id_columns": cached_info.get("id_columns", []),
                     "top_10_rows": top_10_rows,
                     "preview_data": preview_data,
                     "access_count": cached_info["access_count"],
@@ -1727,16 +1776,12 @@ class ExcelAutoRegisterService:
                 }
 
         # 没有缓存或强制重新导入，需要完整处理
-        logger.info(f"📝 开始处理Excel文件（需要识别表头）: {original_filename}")
+        logger.info(f"处理Excel: {original_filename}")
 
         # 处理多个sheet
         if merge_sheets and len(target_sheets) > 1:
-            # 合并多个sheet的场景
-            logger.info(f"🔄 合并 {len(target_sheets)} 个sheet...")
             sheets_data = []
-
             for sheet_name in target_sheets:
-                logger.info(f"  处理 sheet: {sheet_name}")
                 df_raw = self._read_excel_file(
                     excel_file_path, sheet_name=sheet_name, header=None
                 )
@@ -1744,13 +1789,9 @@ class ExcelAutoRegisterService:
                     df_raw, excel_file_path, sheet_name
                 )
                 sheets_data.append((sheet_name, df_processed))
-
-            # 合并所有sheet
             df = self._merge_multiple_sheets(sheets_data, source_column_name)
         else:
-            # 只处理第一个sheet（原有逻辑）
             target_sheet = target_sheets[0]
-            logger.info(f"📄 处理单个sheet: {target_sheet}")
             df_raw = self._read_excel_file(
                 excel_file_path, sheet_name=target_sheet, header=None
             )
@@ -1774,8 +1815,24 @@ class ExcelAutoRegisterService:
         df = self._remove_empty_columns(df)
         df = self._remove_duplicate_columns(df)
         df = self._format_date_columns(df)
-        df = self._convert_column_types(df)  # 智能类型转换
-        df = self._format_numeric_columns(df)  # 格式化数值列为两位小数
+        
+        # 确保有 LLM 客户端（如果没有，尝试自动获取）
+        if self.llm_client is None or self.model_name is None:
+            llm_client, model_name = self._get_llm_client_and_model()
+            if llm_client is not None:
+                self.llm_client = llm_client
+            if model_name is not None:
+                self.model_name = model_name
+        
+        # 使用 LLM 识别 ID 列
+        id_columns = self._detect_id_columns_with_llm(df, table_name)
+        if id_columns:
+            logger.info(f"ID列: {id_columns}")
+        
+        # 对 ID 列进行字符串化处理，然后进行类型转换和格式化
+        df = self._convert_id_columns_to_string(df, id_columns)
+        df = self._convert_column_types(df, id_columns)
+        df = self._format_numeric_columns(df, id_columns)
 
         df.columns = [
             str(col)
@@ -1813,35 +1870,35 @@ class ExcelAutoRegisterService:
             # 将DataFrame注册为临时视图
             conn.register("temp_df", df)
             
-            # 识别数值列，并在创建表时使用 ROUND 函数确保保留两位小数
+            # 识别数值列（排除ID列），并在创建表时使用 ROUND 函数确保保留两位小数
             numeric_columns = []
             for col in df.columns:
                 if df[col].dtype in ["int64", "float64", "int32", "float32", "Int64"]:
-                    numeric_columns.append(col)
+                    # 排除 ID 列
+                    if col not in id_columns:
+                        numeric_columns.append(col)
             
-            # 构建 SELECT 语句，对数值列应用 ROUND 函数
-            if numeric_columns:
-                select_parts = []
-                for col in df.columns:
-                    # 使用双引号转义列名，防止特殊字符问题
-                    col_quoted = f'"{col}"'
-                    if col in numeric_columns:
-                        # 对数值列使用 ROUND 函数保留两位小数
-                        select_parts.append(f"ROUND(CAST({col_quoted} AS DOUBLE), 2) AS {col_quoted}")
-                    else:
-                        select_parts.append(col_quoted)
-                select_sql = ", ".join(select_parts)
-                conn.execute(f"CREATE TABLE {table_name_quoted} AS SELECT {select_sql} FROM temp_df")
-            else:
-                # 如果没有数值列，直接创建表
-                conn.execute(f"CREATE TABLE {table_name_quoted} AS SELECT * FROM temp_df")
+            # 构建 SELECT 语句：
+            # - 对数值列应用 ROUND 函数保留两位小数
+            # - 对 ID 列强制转换为 VARCHAR（确保存储为字符串）
+            select_parts = []
+            for col in df.columns:
+                col_quoted = f'"{col}"'
+                if col in id_columns:
+                    # ID 列强制转换为 VARCHAR，确保存储为字符串
+                    select_parts.append(f"CAST({col_quoted} AS VARCHAR) AS {col_quoted}")
+                elif col in numeric_columns:
+                    # 对数值列使用 ROUND 函数保留两位小数
+                    select_parts.append(f"ROUND(CAST({col_quoted} AS DOUBLE), 2) AS {col_quoted}")
+                else:
+                    select_parts.append(col_quoted)
             
-            # DuckDB 会自动提交，但显式关闭连接确保数据写入磁盘
+            select_sql = ", ".join(select_parts)
+            conn.execute(f"CREATE TABLE {table_name_quoted} AS SELECT {select_sql} FROM temp_df")
+            
             conn.close()
             conn = None
-            logger.info(
-                f"✅ 数据已保存到DuckDB: {db_path} (表: {table_name}, 行数: {len(df)})"
-            )
+            logger.info(f"数据保存完成: {table_name} ({len(df)}行)")
         except Exception as e:
             if conn:
                 try:
@@ -1849,7 +1906,6 @@ class ExcelAutoRegisterService:
                 except Exception:
                     pass
             logger.error(f"数据写入DuckDB失败: {e}")
-            print(f"❌ DEBUG: 保存失败: {e}")
             raise Exception(f"Excel数据转换为数据库失败: {e}")
 
         # 获取列信息
@@ -1866,12 +1922,12 @@ class ExcelAutoRegisterService:
         # LLM 调用可能失败，但不应该阻止数据导入
         try:
             schema_understanding_json = self._generate_schema_understanding_with_llm(
-                df, table_name
+                df, table_name, id_columns
             )
         except Exception as llm_e:
             logger.warning(f"LLM生成schema失败，使用基础schema: {llm_e}")
             # 生成基础的 schema JSON（不包含 LLM 生成的业务理解）
-            schema_understanding_json = self._generate_basic_schema_json(df, table_name)
+            schema_understanding_json = self._generate_basic_schema_json(df, table_name, id_columns)
         
         summary_prompt = self._format_schema_as_prompt(
             schema_understanding_json, df, table_name
@@ -1886,6 +1942,7 @@ class ExcelAutoRegisterService:
             df=df,
             summary_prompt=summary_prompt,
             data_schema_json=schema_understanding_json,
+            id_columns=id_columns,
         )
 
         self._register_to_dbgpt(db_name, db_path, table_name)
@@ -1908,20 +1965,29 @@ class ExcelAutoRegisterService:
             "columns_info": columns_info,
             "summary_prompt": summary_prompt,
             "data_schema_json": schema_understanding_json,
+            "id_columns": id_columns,
             "top_10_rows": top_10_rows,
             "preview_data": preview_data,
             "conv_uid": conv_uid,
         }
 
-    def _generate_basic_schema_json(self, df: pd.DataFrame, table_name: str) -> str:
+    def _generate_basic_schema_json(
+        self, df: pd.DataFrame, table_name: str, id_columns: List[str] = None
+    ) -> str:
         """生成基础的Schema JSON（不使用LLM，仅基于代码分析）"""
         import json
+        
+        if id_columns is None:
+            id_columns = []
         
         columns = []
         for col in df.columns:
             dtype = str(df[col].dtype)
             null_count = df[col].isnull().sum()
             null_pct = (null_count / len(df)) * 100 if len(df) > 0 else 0
+            
+            # 判断是否为ID列
+            is_id_column = col in id_columns
             
             # 确定数据类型
             if dtype in ["int64", "int32", "Int64"]:
@@ -1938,6 +2004,7 @@ class ExcelAutoRegisterService:
                 "data_type": data_type,
                 "description": f"字段 {col}",
                 "null_percentage": round(null_pct, 1),
+                "is_id_column": is_id_column,
             }
             
             # 添加唯一值（对于分类列）
@@ -1946,8 +2013,8 @@ class ExcelAutoRegisterService:
                 if len(unique_vals) <= 20:
                     col_info["unique_values_top20"] = [str(v) for v in unique_vals[:20]]
             
-            # 添加数值统计（对于数值列）
-            if dtype in ["int64", "int32", "Int64", "float64", "float32"]:
+            # 添加数值统计（对于数值列，但排除ID列）
+            if dtype in ["int64", "int32", "Int64", "float64", "float32"] and not is_id_column:
                 col_data = df[col].dropna()
                 if len(col_data) > 0:
                     col_info["statistics_summary"] = (
@@ -1960,6 +2027,7 @@ class ExcelAutoRegisterService:
         schema = {
             "table_name": table_name,
             "table_description": f"数据表 {table_name}",
+            "id_columns": id_columns,
             "row_count": len(df),
             "column_count": len(df.columns),
             "columns": columns,
@@ -1968,9 +2036,12 @@ class ExcelAutoRegisterService:
         return json.dumps(schema, ensure_ascii=False, indent=2)
 
     def _generate_schema_understanding_with_llm(
-        self, df: pd.DataFrame, table_name: str
+        self, df: pd.DataFrame, table_name: str, id_columns: List[str] = None
     ) -> str:
         """使用LLM生成Schema理解JSON"""
+        if id_columns is None:
+            id_columns = []
+        
         er_info = self._prepare_er_info(df, table_name)
         numeric_stats = self._prepare_numeric_stats(df)
         categorical_distribution = self._prepare_categorical_distribution(df)
@@ -1982,13 +2053,11 @@ class ExcelAutoRegisterService:
             categorical_distribution=categorical_distribution,
             sample_data=df.head(3).to_dict("records"),
         )
-        print("=== Schema理解Prompt ===")
-        print(prompt)
         # 调用LLM生成简化的Schema JSON（只包含业务理解字段）
         simplified_json = self._call_llm_for_schema(prompt)
 
-        # 通过代码补充技术性字段，生成完整的Schema JSON
-        enriched_json = self._enrich_schema_json(simplified_json, df, table_name)
+        # 通过代码补充技术性字段，生成完整的Schema JSON（传入已识别的ID列）
+        enriched_json = self._enrich_schema_json(simplified_json, df, table_name, id_columns)
 
         return enriched_json
 
@@ -2174,14 +2243,20 @@ class ExcelAutoRegisterService:
         return ""
 
     def _enrich_schema_json(
-        self, simplified_json: str, df: pd.DataFrame, table_name: str
+        self, simplified_json: str, df: pd.DataFrame, table_name: str, 
+        pre_detected_id_columns: List[str] = None
     ) -> str:
         """通过代码补充技术性字段，生成完整的Schema JSON"""
+        if pre_detected_id_columns is None:
+            pre_detected_id_columns = []
+        
         try:
             schema = json.loads(simplified_json)
         except json.JSONDecodeError as e:
-            logger.error(f"解析简化JSON失败: {e}")
+            logger.error(f"解析Schema JSON失败: {e}")
             raise
+
+        id_columns = pre_detected_id_columns or []
 
         # 构建完整的columns列表
         enriched_columns = []
@@ -2189,11 +2264,15 @@ class ExcelAutoRegisterService:
             col_data = df[col_name]
             dtype = str(col_data.dtype)
 
+            # 判断是否为ID列
+            is_id_column = col_name in id_columns
+            
             col_info = {
                 "column_name": col_name,
                 "data_type": dtype,
                 "description": self._generate_column_description(col_name, col_data, dtype),
                 "is_key_field": self._is_potential_key_field(col_name, col_data),
+                "is_id_column": is_id_column,
             }
 
             # 判断字段类型（根据数据类型判断）
@@ -2255,6 +2334,7 @@ class ExcelAutoRegisterService:
             {
                 "table_name": table_name,
                 "table_description": schema.get("table_description", ""),
+                "id_columns": id_columns,  # 保留ID列信息
                 "columns": enriched_columns,
                 "suggested_questions_zh": suggested_questions_zh[:9],  # 确保最多9个
                 "suggested_questions_en": suggested_questions_en[:9],  # 确保最多9个
@@ -2459,7 +2539,7 @@ class ExcelAutoRegisterService:
                     "messages": [
                         ModelMessage(role=ModelMessageRoleType.HUMAN, content=prompt)
                     ],
-                    "temperature": 0.1,
+                    "temperature": 0,
                     "max_new_tokens": 20480,
                 }
 

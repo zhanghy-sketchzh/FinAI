@@ -3,6 +3,7 @@ Chat Excel API 路由
 将 Excel 上传功能集成到 Chat Excel 模式中
 """
 
+import logging
 import os
 import tempfile
 from typing import Optional
@@ -16,6 +17,33 @@ from dbgpt_serve.datasource.api.endpoints import (
 )
 from dbgpt_serve.datasource.api.schemas import ExcelUploadResponse
 from dbgpt_serve.datasource.service.excel_auto_register import ExcelAutoRegisterService
+
+logger = logging.getLogger(__name__)
+
+
+def _get_llm_client_and_model():
+    """获取 LLM 客户端和模型名称"""
+    try:
+        from dbgpt.model.cluster import WorkerManagerFactory
+        from dbgpt.model.cluster.client import DefaultLLMClient
+        from dbgpt.component import ComponentType
+        
+        worker_manager = global_system_app.get_component(
+            ComponentType.WORKER_MANAGER_FACTORY, WorkerManagerFactory
+        ).create()
+        
+        llm_client = DefaultLLMClient(worker_manager, auto_convert_message=True)
+        
+        # 获取可用模型
+        models = worker_manager.sync_supported_models()
+        if models and len(models) > 0:
+            model_name = models[0].model
+            logger.info(f"获取到可用模型: {model_name}")
+            return llm_client, model_name
+    except Exception as e:
+        logger.warning(f"获取 LLM 客户端失败: {e}")
+    
+    return None, None
 
 chat_excel_router = APIRouter()
 
@@ -57,8 +85,13 @@ async def upload_excel_for_chat(
             temp_file.write(content)
             temp_file_path = temp_file.name
 
+        # 获取 LLM 客户端和模型
+        llm_client, model_name = _get_llm_client_and_model()
+        
         # 处理 Excel
-        excel_service = ExcelAutoRegisterService()
+        excel_service = ExcelAutoRegisterService(
+            llm_client=llm_client, model_name=model_name
+        )
         result = await blocking_func_to_async(
             global_system_app,
             excel_service.process_excel,
@@ -103,6 +136,7 @@ async def get_chat_excel_info(content_hash: str) -> Result[dict]:
         Excel 信息和数据库连接信息
     """
     try:
+        # get_excel_info 不需要 LLM，可以直接创建
         excel_service = ExcelAutoRegisterService()
         info = await blocking_func_to_async(
             global_system_app, excel_service.get_excel_info, content_hash

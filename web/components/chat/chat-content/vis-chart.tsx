@@ -9,6 +9,7 @@ interface Props {
     title: string;
     type: BackEndChartType;
     sql: string;
+    id_columns?: string[];
   };
 }
 
@@ -16,7 +17,7 @@ function VisChart({ data }: Props) {
   if (!data) {
     return null;
   }
-  return <ChartView data={data?.data} type={data?.type} sql={data?.sql} />;
+  return <ChartView data={data?.data} type={data?.type} sql={data?.sql} id_columns={data?.id_columns} />;
 }
 
 export default VisChart;

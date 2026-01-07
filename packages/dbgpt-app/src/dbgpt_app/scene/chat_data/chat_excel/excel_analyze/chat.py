@@ -1128,40 +1128,36 @@ class ChatExcel(BaseChat):
                     ai_response_text = ai_full_response
                     view_message = view_msg
                 else:
-                    # 构建前置内容（思考结果 + 图表）
                     import re
-                    prefix_parts = []
                     
-                    # 1. 添加问题改写的思考结果
+                    # 1. 提取思考结果
+                    thinking_content = ""
                     if self._query_rewrite_result:
                         thinking_stage1 = self._format_query_rewrite_thinking(
                             self._query_rewrite_result
                         )
                         if thinking_stage1:
                             from dbgpt.vis.tags.vis_thinking import VisThinking
-                            vis_thinking_output = VisThinking().sync_display(
+                            thinking_content = VisThinking().sync_display(
                                 content=thinking_stage1
                             )
-                            prefix_parts.append(vis_thinking_output)
                     
                     # 2. 提取图表内容
                     chart_pattern = r"(<chart-view.*?</chart-view>)"
                     chart_matches = re.findall(chart_pattern, view_msg, re.DOTALL)
-                    if chart_matches:
-                        all_chart_views = "\n\n".join(chart_matches)
-                        prefix_parts.append(all_chart_views)
+                    chart_content = "\n\n".join(chart_matches) if chart_matches else ""
                     
-                    # 组合前置内容
-                    prefix_content = "\n\n".join(prefix_parts) if prefix_parts else ""
-                    
-                    # 流式输出summary
+                    # 流式输出summary（引导语）
                     summary_result = None
                     async for chunk in self._generate_result_summary_stream(
                         text_msg, view_msg, text_output=text_output
                     ):
                         if isinstance(chunk, str):
-                            # 流式输出：前置内容 + summary文本
-                            combined_output = f"{prefix_content}\n\n{chunk}" if prefix_content else chunk
+                            # 流式输出：思考结果 + 引导语（图表稍后添加）
+                            if thinking_content:
+                                combined_output = f"{thinking_content}\n\n{chunk}"
+                            else:
+                                combined_output = chunk
                             if text_output:
                                 yield combined_output
                             else:
@@ -1171,32 +1167,30 @@ class ChatExcel(BaseChat):
                                     finish_reason="continue"
                                 )
                         elif isinstance(chunk, dict):
-                            # 流式输出完成，获取最终结果
                             summary_result = chunk
                             break
                     
                     summary_text = summary_result.get("summary", "") if summary_result else ""
                     suggested_questions = summary_result.get("suggested_questions", []) if summary_result else []
                     
-                    # 保存推荐问题到实例变量，供前端获取
                     self._current_suggested_questions = suggested_questions
                     
-                    # 组合最终输出
+                    # 组合最终输出：思考结果 + 引导语 + 图表（引导语在图表上方）
+                    parts = []
+                    if thinking_content:
+                        parts.append(thinking_content)
                     if summary_text:
-                        if prefix_content:
-                            view_message = f"{prefix_content}\n\n{summary_text}"
-                        else:
-                            view_message = summary_text
-                    else:
-                        # 即使总结为空，也显示查询结果和提示信息
+                        parts.append(summary_text)
+                    elif not chart_content:
+                        # 没有引导语也没有图表
                         detected_language = getattr(self, "_detected_language", "zh")
                         is_english = detected_language == "en"
-                        no_result_msg = "查询已完成，但未生成总结。查询结果如下：" if not is_english else "Query completed, but no summary was generated. Query results:"
-                        
-                        if prefix_content:
-                            view_message = f"{prefix_content}\n\n{no_result_msg}\n\n{view_msg}"
-                        else:
-                            view_message = f"{no_result_msg}\n\n{view_msg}"
+                        no_result_msg = "Query completed." if is_english else "查询已完成。"
+                        parts.append(no_result_msg)
+                    if chart_content:
+                        parts.append(chart_content)
+                    
+                    view_message = "\n\n".join(parts)
                     
                     # 如果有推荐问题，在view_msg末尾添加特殊标记
                     if suggested_questions:
@@ -1470,42 +1464,37 @@ class ChatExcel(BaseChat):
             import json
             import re
 
-            logger.info(f"开始生成结果总结，view_msg长度: {len(view_msg)}")
-            logger.debug(f"view_msg内容（前500字符）: {view_msg[:500]}")
-
             chart_pattern = r'<chart-view content="([^"]+)">'
             matches = re.findall(chart_pattern, view_msg)
 
-            logger.info(f"找到的chart-view数量: {len(matches)}")
-
             all_sql_results = []
+            total_result_count = 0
+            
             for match_str in matches:
                 content_str = html.unescape(match_str)
                 content_data = json.loads(content_str)
 
                 sql = content_data.get("sql", "").strip()
                 query_data = content_data.get("data", [])
+                total_result_count += len(query_data) if isinstance(query_data, list) else 0
 
-                # 即使查询结果为空，也记录SQL和结果（空数组）
                 all_sql_results.append({"sql": sql, "result": query_data})
 
             # 如果没有找到chart-view标签，尝试从原始文本中提取SQL
             if not all_sql_results:
-                # 尝试从api-call标签中提取SQL
                 api_call_pattern = r'<api-call>.*?<sql>(.*?)</sql>.*?</api-call>'
                 api_matches = re.findall(api_call_pattern, original_text, re.DOTALL)
                 if api_matches:
                     for sql in api_matches:
                         sql = sql.strip()
                         if sql:
-                            # 即使没有查询结果，也记录SQL（结果为空数组）
                             all_sql_results.append({"sql": sql, "result": []})
-                            logger.info(f"从api-call标签提取到SQL: {sql[:100]}")
 
-            # 即使没有SQL结果，也生成总结（说明查询无结果）
-            if not all_sql_results:
-                logger.warning("未找到chart-view标签和api-call标签，但仍生成总结")
-                # 继续执行，生成一个说明查询无结果的总结
+            detected_language = getattr(self, "_detected_language", "zh")
+            is_english = detected_language == "en"
+            
+            # 检查数据量是否过大（超过5条记录），如果过大则使用轻量级prompt
+            use_lightweight_summary = total_result_count > 5
 
             history_context = ""
             if self.history_messages and len(self.history_messages) > 0:
@@ -1553,21 +1542,39 @@ class ChatExcel(BaseChat):
             if all_sql_results:
                 for i, sql_result in enumerate(all_sql_results, 1):
                     sql_label = f"Executed SQL {i}" if is_english else f"执行的SQL {i}"
-                    result_label = f"Query Result {i}" if is_english else f"查询结果 {i}"
                     sql_results_text += f"\n{sql_label}：\n{sql_result['sql']}\n\n"
-                    result_json = json.dumps(
-                        sql_result["result"], ensure_ascii=False, indent=2
-                    )
-                    sql_results_text += f"{result_label}：\n{result_json}\n"
                     
-                    # 如果查询结果为空，添加说明
-                    if not sql_result["result"]:
-                        if is_english:
-                            sql_results_text += "\n**Note**: The query returned no results (empty result set).\n"
+                    result_data = sql_result["result"]
+                    result_count = len(result_data) if isinstance(result_data, list) else 0
+                    
+                    if use_lightweight_summary:
+                        # 数据量过大时，只传入摘要信息
+                        if result_count > 0:
+                            # 获取字段名
+                            field_names = list(result_data[0].keys()) if result_data else []
+                            if is_english:
+                                sql_results_text += f"Query Result: {result_count} records returned\n"
+                                sql_results_text += f"Fields: {', '.join(field_names)}\n"
+                            else:
+                                sql_results_text += f"查询结果：返回 {result_count} 条记录\n"
+                                sql_results_text += f"包含字段：{', '.join(field_names)}\n"
                         else:
-                            sql_results_text += "\n**注意**：查询结果为空（未找到匹配的数据）。\n"
+                            if is_english:
+                                sql_results_text += "Query Result: No records found (empty result set)\n"
+                            else:
+                                sql_results_text += "查询结果：未找到匹配的数据（结果为空）\n"
+                    else:
+                        # 数据量较小时，传入完整数据
+                        result_label = f"Query Result {i}" if is_english else f"查询结果 {i}"
+                        result_json = json.dumps(result_data, ensure_ascii=False, indent=2)
+                        sql_results_text += f"{result_label}：\n{result_json}\n"
+                        
+                        if not result_data:
+                            if is_english:
+                                sql_results_text += "\n**Note**: The query returned no results (empty result set).\n"
+                            else:
+                                sql_results_text += "\n**注意**：查询结果为空（未找到匹配的数据）。\n"
             else:
-                # 如果没有SQL结果，添加说明
                 if is_english:
                     sql_results_text = "\n**Note**: No SQL query was executed or no query results were found.\n"
                 else:
@@ -1632,7 +1639,65 @@ All Columns:
                     except Exception as e:
                         logger.warning(f"解析data_schema_json失败: {e}")
 
-            if is_english:
+            if use_lightweight_summary:
+                # 数据量过大时，使用简化的prompt（不传入完整数据，但仍生成推荐问题）
+                if is_english:
+                    summary_prompt = f"""User's Question: {self.current_user_input.last_text}
+{sql_results_text}
+{data_schema_info}
+
+Task: Generate:
+1. A brief, natural introduction sentence for the query results
+2. 9 follow-up questions based on the data schema
+
+Output Format:
+```json
+{{
+  "summary": "Brief introduction (under 30 words, no data analysis)",
+  "suggested_questions": [
+    "Question 1 (simple)", "Question 2 (simple)", "Question 3 (simple)",
+    "Question 4 (simple)", "Question 5 (simple)", "Question 6 (simple)",
+    "Question 7 (medium)", "Question 8 (medium)", "Question 9 (medium)"
+  ]
+}}
+```
+
+Requirements:
+- Summary: naturally introduce the data results, concise, NO analysis
+- Questions: first 6 simple with standard answers, last 3 medium difficulty
+- All questions must be based on actual fields in the data table
+- Must be in ENGLISH
+
+Output JSON only:"""
+                else:
+                    summary_prompt = f"""用户问题：{self.current_user_input.last_text}
+{sql_results_text}
+{data_schema_info}
+
+任务：生成：
+1. 一句简短、自然的引导语来介绍查询结果
+2. 9个基于数据表的推荐问题
+
+输出格式：
+```json
+{{
+  "summary": "简短引导语（不超过30字，不要分析数据）",
+  "suggested_questions": [
+    "问题1（简单）", "问题2（简单）", "问题3（简单）",
+    "问题4（简单）", "问题5（简单）", "问题6（简单）",
+    "问题7（中等）", "问题8（中等）", "问题9（中等）"
+  ]
+}}
+```
+
+要求：
+- 引导语：自然引出数据结果，简洁，不要分析数据
+- 问题：前6个简单问题有标准答案，后3个中等难度
+- 所有问题必须基于数据表中的实际字段
+- 必须使用中文
+
+直接输出JSON："""
+            elif is_english:
                 summary_prompt = f"""{history_context}
 === User's Current Question ===
 {self.current_user_input.last_text}
@@ -1741,7 +1806,7 @@ Please output the JSON directly, without any other text:"""  # noqa: E501
                         role=ModelMessageRoleType.HUMAN, content=summary_prompt
                     )
                 ],
-                temperature=0.3,
+                temperature=0,
                 max_new_tokens=2048,
                 context=ModelRequestContext(stream=True),
             )

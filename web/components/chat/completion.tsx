@@ -292,15 +292,11 @@ const Completion = ({ messages, onSubmit, onFormatContent }: Props) => {
         }, 3000);
       }
     } else {
-      // Not streaming - check if user wants auto-scroll
-      if (!isUserScrollingRef.current) {
-        const currentHeight = scrollElement.scrollHeight;
-        const heightDiff = currentHeight - lastContentHeightRef.current;
-
-        if (heightDiff > 0) {
-          scrollToBottom();
-          lastContentHeightRef.current = currentHeight;
-        }
+      // Not streaming - only update height tracking, don't auto-scroll
+      // This prevents scrolling when user interacts with pagination, tabs, etc.
+      const currentHeight = scrollElement.scrollHeight;
+      if (currentHeight !== lastContentHeightRef.current) {
+        lastContentHeightRef.current = currentHeight;
       }
     }
   }, [showMessages, scene, scrollToBottom]);
