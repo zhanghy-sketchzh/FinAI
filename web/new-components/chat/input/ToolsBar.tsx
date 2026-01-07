@@ -56,6 +56,11 @@ const ToolsBar: React.FC<{
   const [clsLoading, setClsLoading] = useState<boolean>(false);
   const [clearAllLoading, setClearAllLoading] = useState<boolean>(false);
 
+  // 当 chatId 变化时，重置 fileList（新建对话或切换对话）
+  React.useEffect(() => {
+    setFileList([]);
+  }, [chatId]);
+
   // 通知父组件 loading 状态变化
   React.useEffect(() => {
     onLoadingChange?.(loading);
@@ -99,10 +104,13 @@ const ToolsBar: React.FC<{
           }
 
           Modal.confirm({
-            title: t('confirm_clear_all_caches'),
+            title: (
+              <div>
+                <div style={{ marginBottom: '8px' }}>{t('clear_all_caches_content')}</div>
+              </div>
+            ),
             content: (
               <div>
-                <p>{t('clear_all_caches_content')}</p>
                 <ul style={{ paddingLeft: '20px', margin: '10px 0' }}>
                   <li>{t('clear_cache_excel_db')}</li>
                   <li>{t('clear_cache_excel_files')}</li>
@@ -272,7 +280,7 @@ const ToolsBar: React.FC<{
                     ? excelPreviewVisible
                       ? '关闭预览'
                       : '查看数据'
-                    : '点击加载预览数据'
+                    : '点击查看预览'
                   : ''
               }
             >
@@ -294,7 +302,7 @@ const ToolsBar: React.FC<{
                         <EyeInvisibleOutlined className='ml-2 text-gray-400 hover:text-blue-500' />
                       )
                     ) : (
-                      <LoadingOutlined className='ml-2 text-gray-400 hover:text-blue-500 animate-spin' style={{ fontSize: 14 }} />
+                      <EyeInvisibleOutlined className='ml-2 text-gray-400 hover:text-blue-500' />
                     )
                   )}
                 </div>
@@ -339,18 +347,18 @@ const ToolsBar: React.FC<{
         <div className='flex gap-3 text-lg items-center'>
           {/* <ModelSwitcher /> */}
           <Resource fileList={fileList} setFileList={setFileList} setLoading={setLoading} fileName={fileName} />
+          {loading && (
+            <div className='flex items-center gap-2'>
+              <Spin spinning={loading} indicator={<LoadingOutlined style={{ fontSize: 14 }} spin />} />
+              <span className='text-sm text-gray-500'>{t('parsing_data')}</span>
+            </div>
+          )}
           <FileNameDisplay />
           {/* Temperature and MaxNewTokens icons hidden */}
         </div>
         <div className='flex gap-1'>{returnTools(rightToolsConfig)}</div>
       </div>
       <ImageResourcesDisplay />
-      {loading && (
-        <div className='flex items-center gap-2 mt-2'>
-          <Spin spinning={loading} indicator={<LoadingOutlined style={{ fontSize: 16 }} spin />} />
-          <span className='text-sm text-gray-500'>{t('parsing_data')}</span>
-        </div>
-      )}
     </div>
   );
 };

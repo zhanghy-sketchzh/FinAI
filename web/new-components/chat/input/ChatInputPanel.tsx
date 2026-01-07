@@ -344,45 +344,35 @@ const ChatInputPanel: React.ForwardRefRenderFunction<any, { ctrl: AbortControlle
         <div className='mb-4'>
           <div className='flex items-start gap-3'>
             {/* 左侧标签 */}
-            <div
-              className='flex items-center gap-1.5 cursor-pointer select-none group flex-shrink-0 py-1'
-              onClick={() => setIsQuestionsCollapsed(!isQuestionsCollapsed)}
-            >
-              <span className='text-[13px] font-medium text-slate-500 dark:text-slate-400 whitespace-nowrap group-hover:text-blue-500 dark:group-hover:text-blue-400 transition-colors'>
+            <div className='flex items-center gap-1.5 flex-shrink-0 py-1'>
+              <span className='text-[13px] text-slate-500 dark:text-slate-400 whitespace-nowrap'>
                 {t('maybe_you_want_to_ask') || '或许你想问'}
               </span>
-              {isQuestionsCollapsed ? (
-                <DownOutlined className='text-[10px] text-slate-400 dark:text-slate-500 group-hover:text-blue-500 dark:group-hover:text-blue-400 transition-colors' />
-              ) : (
-                <UpOutlined className='text-[10px] text-slate-400 dark:text-slate-500 group-hover:text-blue-500 dark:group-hover:text-blue-400 transition-colors' />
-              )}
             </div>
 
             {/* 右侧问题列表 */}
-            {!isQuestionsCollapsed && (
-              <div className='flex-1 flex flex-wrap items-center gap-2'>
-                {suggestedQuestions.map((question, index) => (
-                  <div
-                    key={index}
-                    className='inline-flex items-center px-3 py-1.5 bg-white/70 dark:bg-[rgba(255,255,255,0.08)] border border-slate-200/80 dark:border-[rgba(255,255,255,0.15)] rounded-lg cursor-pointer hover:bg-blue-50 dark:hover:bg-blue-900/20 hover:border-blue-300 dark:hover:border-blue-500/40 transition-all duration-200 group/item'
-                    onClick={() => handleSuggestedQuestionClick(question)}
-                  >
-                    <span className='text-[13px] text-slate-600 dark:text-slate-300 group-hover/item:text-blue-600 dark:group-hover/item:text-blue-400 transition-colors leading-5'>
-                      {question}
-                    </span>
-                  </div>
-                ))}
-                {/* 刷新按钮 */}
+            <div className='flex-1 flex flex-wrap items-center gap-2'>
+              {suggestedQuestions.map((question, index) => (
                 <div
-                  onClick={handleRefreshQuestions}
-                  className='inline-flex items-center gap-1 px-2.5 py-1.5 text-slate-400 dark:text-slate-500 hover:text-blue-500 dark:hover:text-blue-400 cursor-pointer transition-colors'
-                  title='刷新问题'
+                  key={index}
+                  className='inline-flex items-center px-3 py-1.5 bg-white/70 dark:bg-[rgba(255,255,255,0.08)] border border-slate-200/80 dark:border-[rgba(255,255,255,0.15)] rounded-lg cursor-pointer hover:bg-blue-50 dark:hover:bg-blue-900/20 hover:border-blue-300 dark:hover:border-blue-500/40 transition-all duration-200 group/item'
+                  onClick={() => handleSuggestedQuestionClick(question)}
                 >
-                  <ReloadOutlined className='text-xs' />
-                  <span className='text-xs'>刷新</span>
+                  <span className='text-[13px] text-slate-600 dark:text-slate-300 group-hover/item:text-blue-600 dark:group-hover/item:text-blue-400 transition-colors leading-5'>
+                    {question}
+                  </span>
                 </div>
+              ))}
+              {/* 刷新按钮 */}
+              <div
+                onClick={handleRefreshQuestions}
+                className='inline-flex items-center gap-1 px-2.5 py-1.5 text-slate-400 dark:text-slate-500 hover:text-blue-500 dark:hover:text-blue-400 cursor-pointer transition-colors'
+                title={t('refresh_questions_tip')}
+              >
+                <ReloadOutlined className='text-xs' />
+                <span className='text-xs'>{t('refresh_questions')}</span>
               </div>
-            )}
+            </div>
           </div>
         </div>
       )}

@@ -30,7 +30,7 @@ export const ChatEn = {
   code_preview_download: 'Download',
   code_preview_run: 'Run',
   code_preview_close: 'Close',
-  parsing_data: 'Parsing and understanding data...',
+  parsing_data: 'Parsing and understanding data (2-3 minutes for first time)...',
   data_preview: 'Data Preview',
   loading_data: 'Loading data...',
   filter_placeholder: 'Enter filter content',
@@ -43,6 +43,8 @@ export const ChatEn = {
   help_center: 'Help Center',
   // ChatHeader
   maybe_you_want_to_ask: 'Maybe you want to ask:',
+  refresh_questions: 'Refresh',
+  refresh_questions_tip: 'Refresh questions',
   // ToolsBar - Clear all caches dialog
   confirm_clear_all_caches: 'Confirm to clear all caches?',
   clear_all_caches_content: 'This operation will clear all the following data:',
@@ -53,7 +55,7 @@ export const ChatEn = {
   clear_cache_chat_history: 'All chat history',
   clear_cache_file_server: 'File server storage',
   clear_cache_model: 'Model cache',
-  clear_cache_warning: 'This operation cannot be undone!',
+  clear_cache_warning: 'This operation cannot be undone! Confirm clearing and refresh in 3 seconds',
   confirm_clear: 'Confirm Clear',
   clear_cache_success: 'All caches have been cleared! The page will refresh in 3 seconds...',
   clear_cache_failed: 'Failed to clear cache',

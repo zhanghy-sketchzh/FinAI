@@ -214,25 +214,6 @@ const ChatHeader: React.FC<{ isScrollToTop: boolean }> = ({ isScrollToTop }) => 
             <PlusOutlined style={{ fontSize: 14 }} />
             <span className='text-sm font-medium'>{t('new_chat')}</span>
           </div>
-          {/* 收藏 */}
-          <div
-            onClick={async () => {
-              await operate();
-            }}
-            className='cursor-pointer'
-          >
-            {loading ? (
-              <Spin spinning={loading} indicator={<LoadingOutlined style={{ fontSize: 24 }} spin />} />
-            ) : (
-              <>
-                {isCollected ? (
-                  <StarFilled style={{ fontSize: 18 }} className='text-yellow-400 cursor-pointer' />
-                ) : (
-                  <StarOutlined style={{ fontSize: 18, cursor: 'pointer' }} />
-                )}
-              </>
-            )}
-          </div>
         </div>
       </header>
     );

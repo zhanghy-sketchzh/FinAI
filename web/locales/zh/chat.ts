@@ -38,7 +38,7 @@ export const ChatZh: Resources['translation'] = {
   code_preview_download: '下载',
   code_preview_run: '运行',
   code_preview_close: '关闭',
-  parsing_data: '正在解析理解数据...',
+  parsing_data: '正在解析理解数据（首次需要2-3分钟）...',
   data_preview: '数据预览',
   loading_data: '正在加载数据...',
   filter_placeholder: '输入筛选内容',
@@ -51,6 +51,8 @@ export const ChatZh: Resources['translation'] = {
   help_center: '帮助中心',
   // ChatHeader
   maybe_you_want_to_ask: '或许你想问：',
+  refresh_questions: '刷新',
+  refresh_questions_tip: '刷新问题',
   // ToolsBar - Clear all caches dialog
   confirm_clear_all_caches: '确认清除所有数据？',
   clear_all_caches_content: '此操作将清除以下所有数据：',
@@ -61,7 +63,7 @@ export const ChatZh: Resources['translation'] = {
   clear_cache_chat_history: '所有会话历史记录',
   clear_cache_file_server: '文件服务器存储',
   clear_cache_model: '模型缓存',
-  clear_cache_warning: '此操作不可撤销！',
+  clear_cache_warning: '此操作不可撤销！确认清除后3秒生效',
   confirm_clear: '确认清除',
   clear_cache_success: '所有数据已清除成功！页面将在3秒后刷新...',
   clear_cache_failed: '清除缓存失败',

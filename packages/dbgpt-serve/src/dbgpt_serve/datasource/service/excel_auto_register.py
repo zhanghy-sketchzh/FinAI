@@ -1561,6 +1561,11 @@ class ExcelAutoRegisterService:
         conn = None
         try:
             conn = duckdb.connect(db_path)
+            
+            # 先删除已存在的表（如果有的话），避免重复上传时报错
+            table_name_quoted = f'"{table_name}"'
+            conn.execute(f"DROP TABLE IF EXISTS {table_name_quoted}")
+            
             # 将DataFrame注册为临时视图
             conn.register("temp_df", df)
             
@@ -1582,11 +1587,9 @@ class ExcelAutoRegisterService:
                     else:
                         select_parts.append(col_quoted)
                 select_sql = ", ".join(select_parts)
-                table_name_quoted = f'"{table_name}"'
                 conn.execute(f"CREATE TABLE {table_name_quoted} AS SELECT {select_sql} FROM temp_df")
             else:
                 # 如果没有数值列，直接创建表
-                table_name_quoted = f'"{table_name}"'
                 conn.execute(f"CREATE TABLE {table_name_quoted} AS SELECT * FROM temp_df")
             
             # DuckDB 会自动提交，但显式关闭连接确保数据写入磁盘
@@ -1616,9 +1619,16 @@ class ExcelAutoRegisterService:
         finally:
             conn.close()
 
-        schema_understanding_json = self._generate_schema_understanding_with_llm(
-            df, table_name
-        )
+        # LLM 调用可能失败，但不应该阻止数据导入
+        try:
+            schema_understanding_json = self._generate_schema_understanding_with_llm(
+                df, table_name
+            )
+        except Exception as llm_e:
+            logger.warning(f"LLM生成schema失败，使用基础schema: {llm_e}")
+            # 生成基础的 schema JSON（不包含 LLM 生成的业务理解）
+            schema_understanding_json = self._generate_basic_schema_json(df, table_name)
+        
         summary_prompt = self._format_schema_as_prompt(
             schema_understanding_json, df, table_name
         )
@@ -1658,6 +1668,60 @@ class ExcelAutoRegisterService:
             "preview_data": preview_data,
             "conv_uid": conv_uid,
         }
+
+    def _generate_basic_schema_json(self, df: pd.DataFrame, table_name: str) -> str:
+        """生成基础的Schema JSON（不使用LLM，仅基于代码分析）"""
+        import json
+        
+        columns = []
+        for col in df.columns:
+            dtype = str(df[col].dtype)
+            null_count = df[col].isnull().sum()
+            null_pct = (null_count / len(df)) * 100 if len(df) > 0 else 0
+            
+            # 确定数据类型
+            if dtype in ["int64", "int32", "Int64"]:
+                data_type = "整数"
+            elif dtype in ["float64", "float32"]:
+                data_type = "小数"
+            elif "datetime" in dtype:
+                data_type = "日期时间"
+            else:
+                data_type = "文本"
+            
+            col_info = {
+                "column_name": col,
+                "data_type": data_type,
+                "description": f"字段 {col}",
+                "null_percentage": round(null_pct, 1),
+            }
+            
+            # 添加唯一值（对于分类列）
+            if dtype == "object":
+                unique_vals = df[col].dropna().unique()
+                if len(unique_vals) <= 20:
+                    col_info["unique_values_top20"] = [str(v) for v in unique_vals[:20]]
+            
+            # 添加数值统计（对于数值列）
+            if dtype in ["int64", "int32", "Int64", "float64", "float32"]:
+                col_data = df[col].dropna()
+                if len(col_data) > 0:
+                    col_info["statistics_summary"] = (
+                        f"范围: {col_data.min():.2f} ~ {col_data.max():.2f}, "
+                        f"平均: {col_data.mean():.2f}"
+                    )
+            
+            columns.append(col_info)
+        
+        schema = {
+            "table_name": table_name,
+            "table_description": f"数据表 {table_name}",
+            "row_count": len(df),
+            "column_count": len(df.columns),
+            "columns": columns,
+        }
+        
+        return json.dumps(schema, ensure_ascii=False, indent=2)
 
     def _generate_schema_understanding_with_llm(
         self, df: pd.DataFrame, table_name: str

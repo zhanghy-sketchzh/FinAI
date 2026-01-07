@@ -133,26 +133,78 @@ class ChatExcel(BaseChat):
             duckdb_path=duckdb_path,
         )
 
+        use_cache_success = False
         if use_existing_db and duckdb_path:
-            self._curr_table = duckdb_table_name or "data_analysis_table"
-            self.excel_reader = self._create_reader_from_duckdb(
-                chat_param.chat_session_id,
-                duckdb_path,
-                file_name,
-                duckdb_table_name,
-            )
-        else:
-            self._curr_table = "data_analysis_table"
-            self.excel_reader = ExcelReader(
-                chat_param.chat_session_id,
-                file_path,
-                file_name,
-                read_type="direct",
-                database_name=database_file_path,
-                table_name=self._curr_table,
-                duckdb_extensions_dir=self.curr_config.duckdb_extensions_dir,
-                force_install=self.curr_config.force_install,
-            )
+            try:
+                self.excel_reader = self._create_reader_from_duckdb(
+                    chat_param.chat_session_id,
+                    duckdb_path,
+                    file_name,
+                    duckdb_table_name,
+                )
+                # 使用 excel_reader 中实际获取到的表名（可能是从数据库查询得到的）
+                self._curr_table = self.excel_reader.table_name
+                use_cache_success = True
+                # 确保 database_file_path 与实际使用的 duckdb_path 一致
+                database_file_path = duckdb_path
+                logger.info(f"成功使用DuckDB缓存，表名: {self._curr_table}")
+            except Exception as e:
+                logger.warning(f"使用DuckDB缓存失败，回退到重新导入: {e}")
+                # 删除损坏的缓存文件
+                try:
+                    if os.path.exists(duckdb_path):
+                        os.remove(duckdb_path)
+                        logger.info(f"已删除损坏的缓存文件: {duckdb_path}")
+                except Exception as del_e:
+                    logger.warning(f"删除缓存文件失败: {del_e}")
+                use_cache_success = False
+
+        if not use_cache_success:
+            # 如果有 duckdb_path 但缓存加载失败，使用原来的 duckdb_path
+            actual_db_path = duckdb_path if duckdb_path else database_file_path
+            
+            # 检查数据库中是否已有表（可能是 excel_auto_register 创建的）
+            existing_table_name = None
+            if actual_db_path and os.path.exists(actual_db_path):
+                try:
+                    import duckdb as duckdb_check
+                    check_conn = duckdb_check.connect(database=actual_db_path, read_only=True)
+                    query = (
+                        "SELECT table_name FROM information_schema.tables "
+                        "WHERE table_schema = 'main'"
+                    )
+                    tables_result = check_conn.execute(query).fetchall()
+                    check_conn.close()
+                    if tables_result:
+                        existing_table_name = tables_result[0][0]
+                        logger.info(f"发现已存在的表: {existing_table_name}")
+                except Exception as check_e:
+                    logger.warning(f"检查已存在表失败: {check_e}")
+            
+            if existing_table_name:
+                # 使用已存在的表，不需要重新导入
+                self._curr_table = existing_table_name
+                self.excel_reader = self._create_reader_from_duckdb(
+                    chat_param.chat_session_id,
+                    actual_db_path,
+                    file_name,
+                    existing_table_name,
+                )
+                logger.info(f"使用已存在的DuckDB表: {existing_table_name}")
+            else:
+                # 没有已存在的表，需要重新创建
+                self._curr_table = "data_analysis_table"
+                self.excel_reader = ExcelReader(
+                    chat_param.chat_session_id,
+                    file_path,
+                    file_name,
+                    read_type="direct",
+                    database_name=actual_db_path,
+                    table_name=self._curr_table,
+                    duckdb_extensions_dir=self.curr_config.duckdb_extensions_dir,
+                    force_install=self.curr_config.force_install,
+                )
+            database_file_path = actual_db_path
 
         self._file_name = file_name
         self._database_file_path = database_file_path
