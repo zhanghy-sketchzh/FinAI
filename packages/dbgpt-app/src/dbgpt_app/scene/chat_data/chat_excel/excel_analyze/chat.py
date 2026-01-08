@@ -1806,7 +1806,6 @@ Please output the JSON directly, without any other text:"""  # noqa: E501
                         role=ModelMessageRoleType.HUMAN, content=summary_prompt
                     )
                 ],
-                temperature=0,
                 max_new_tokens=2048,
                 context=ModelRequestContext(stream=True),
             )

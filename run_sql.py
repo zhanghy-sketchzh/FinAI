@@ -9,16 +9,61 @@ from pathlib import Path
 # ========== 配置区域 - 在这里修改 ==========
 
 # 数据库文件路径
-DB_PATH = "packages/pilot/meta_data/excel_dbs/excel_4368df0b.db"
+DB_PATH = "/home/adminstrator/work/FinAI/packages/pilot/meta_data/excel_dbs/excel_7a8cb57b.duckdb"
 
 # 表名
-TABLE_NAME = "奖金数据模版4"
+TABLE_NAME = "奖金数据模版_final"
 
 # 要执行的SQL (支持多条,用列表)
 SQL_QUERIES = [
     # 示例1: 查看前5行数据
     f'''
-    WITH base_2023 AS ( SELECT "上年度参考信息(Reference Info of Last Year)-2023人才梯队" AS "2023人才梯队", COUNT(DISTINCT "基本信息(BasicInfo)-员工ID") AS "2023人数", AVG( CAST("上年度参考信息(Reference Info of Last Year)-2023合计金额(CNY)" AS DOUBLE) ) AS "2023平均奖金(CNY)", SUM( CAST("上年度参考信息(Reference Info of Last Year)-2023合计金额(CNY)" AS DOUBLE) ) AS "2023奖金总额(CNY)" FROM "奖金数据模版3" WHERE "上年度参考信息(Reference Info of Last Year)-2023人才梯队" IS NOT NULL GROUP BY "上年度参考信息(Reference Info of Last Year)-2023人才梯队" ), base_2023_with_ratio AS ( SELECT *, ROUND( "2023人数" * 100.0 / SUM("2023人数") OVER (), 2 ) AS "2023人数占比(%)" FROM base_2023 ), base_2024 AS ( SELECT "基本信息(BasicInfo)-人才梯队" AS "人才梯队", COUNT(DISTINCT "基本信息(BasicInfo)-员工ID") AS "2024人数" FROM "奖金数据模版3" WHERE "基本信息(BasicInfo)-人才梯队" IS NOT NULL GROUP BY "基本信息(BasicInfo)-人才梯队" ) SELECT b23."2023人才梯队", b23."2023人数", b23."2023人数占比(%)", ROUND(b23."2023平均奖金(CNY)", 2) AS "2023平均奖金(CNY)", b23."2023奖金总额(CNY)", COALESCE(b24."2024人数", 0) AS "2024人数", COALESCE(b24."2024人数", 0) - b23."2023人数" AS "人数变化", ROUND( (COALESCE(b24."2024人数", 0) - b23."2023人数") * 100.0 / NULLIF(b23."2023人数", 0), 2 ) AS "人数变化率(%)" FROM base_2023_with_ratio b23 LEFT JOIN base_2024 b24 ON b23."2023人才梯队" = b24."人才梯队" ORDER BY b23."2023人数" DESC;
+    WITH
+  department_summary AS (
+    SELECT
+      "基本信息(BasicInfo)-部门" AS "部门",
+      COUNT("基本信息(BasicInfo)-员工ID") AS "员工人数",
+      ROUND(
+        SUM("本次合计(TotalofThisYear)-合计金额(CNY)") / COUNT("基本信息(BasicInfo)-员工ID"),
+        2
+      ) AS "2025年人均奖金",
+      ROUND(
+        SUM("上年度参考(ReferenceInfo)-2024合计金额(CNY)") / COUNT("基本信息(BasicInfo)-员工ID"),
+        2
+      ) AS "2024年人均奖金"
+    FROM
+      "奖金数据模版_final"
+    WHERE
+      "本次合计(TotalofThisYear)-合计金额(CNY)" IS NOT NULL
+      AND "上年度参考(ReferenceInfo)-2024合计金额(CNY)" IS NOT NULL
+    GROUP BY
+      "基本信息(BasicInfo)-部门"
+  ),
+  yoy_calculation AS (
+    SELECT
+      "部门",
+      "员工人数",
+      "2025年人均奖金",
+      "2024年人均奖金",
+      ROUND(
+        (("2025年人均奖金" - "2024年人均奖金") / "2024年人均奖金") * 100,
+        2
+      ) AS "YOY增长率(%)",
+      ROUND(("2025年人均奖金" - "2024年人均奖金"), 2) AS "变化金额"
+    FROM
+      department_summary
+  )
+SELECT
+  "部门",
+  "员工人数",
+  "2025年人均奖金",
+  "2024年人均奖金",
+  "YOY增长率(%)",
+  "变化金额"
+FROM
+  yoy_calculation
+ORDER BY
+  "部门";
     ''',
     
 ]

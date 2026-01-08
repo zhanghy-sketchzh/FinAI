@@ -519,7 +519,6 @@ Now please combine the historical context and the user's current question, analy
         # 调用LLM（流式）
         request_params = {
             "messages": [ModelMessage(role=ModelMessageRoleType.HUMAN, content=prompt)],
-            "temperature": 0,
             "max_new_tokens": 2000,
             "context": ModelRequestContext(stream=True),
         }

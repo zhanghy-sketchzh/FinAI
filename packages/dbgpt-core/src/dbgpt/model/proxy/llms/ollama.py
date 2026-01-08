@@ -169,7 +169,6 @@ class OllamaLLMClient(ProxyLLMClient):
                 model=model,
                 messages=messages,
                 stream=True,
-                options={"temperature": 0},
             )
             content = ""
             for chunk in stream:
