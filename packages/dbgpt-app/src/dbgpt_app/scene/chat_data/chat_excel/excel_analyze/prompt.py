@@ -56,6 +56,11 @@ _DUCKDB_RULES_ZH = """
 3. 多层 CTE 中各层之间的列引用必须一致，特别是排序和连接的列
 **DuckDB的WHERE子句必须在SELECT列定义之前处理,不能引用SELECT中定义的别名**
 
+### 【CTE和别名规则】：
+**【极其重要】同一SELECT中不能引用本SELECT定义的别名：**
+- 或使用多层CTE：第一层计算基础值，第二层引用第一层的别名进行计算
+**CTE字段传递：后续需要的字段必须在CTE的SELECT中明确列出**
+
 ### 【子查询使用规则】：
 - **禁止在 SELECT 列表中使用返回多行的子查询**（会导致"More than one row returned"错误）
 - **正确做法**：使用 JOIN 或窗口函数替代，如需子查询必须与主查询关联（WHERE 条件关联）
@@ -98,6 +103,12 @@ _DUCKDB_RULES_EN = """
 1. Non-aggregate columns in SELECT must be in GROUP BY
 2. Columns in ORDER BY must be properly selected in preceding CTE or query
 3. Ensure column reference consistency between CTE layers, especially for columns used in sorting and joining
+**DuckDB WHERE clause is processed before SELECT column definitions, cannot reference aliases defined in SELECT**
+
+### 【CTE and Alias Rules】：
+**【CRITICAL】Cannot reference aliases within same SELECT:**
+**CTE field passing: Fields needed subsequently must be explicitly listed in CTE SELECT**
+**Per-capita calculation: Use NULLIF(denominator, 0) to avoid division by zero, e.g. ROUND(SUM("amt")/NULLIF(COUNT(*), 0), 2)**
 
 ### 【Subquery Usage Rules】：
 - **NEVER use subqueries in SELECT list that return multiple rows** (causes "More than one row returned" error)
@@ -126,6 +137,7 @@ _ANALYSIS_CONSTRAINTS_ZH = """
 列名规则：中文/数字开头/特殊字符必须用双引号;不要使用 UNION / UNION ALL，如需多个结果请分别查询；时间戳处理使用 to_timestamp() 而非直接 CAST；注释行必须单独成行，不要放在 SQL 语句的同一行
 字符串匹配规则：WHERE子句中的字符串条件必须完全匹配数据中的实际值，不能随意替换字符（如"和"不能替换为"与"），建议使用LIKE或IN操作符基于实际数据值
 子查询规则：禁止在 SELECT 列表中使用返回多行的子查询（会导致"More than one row returned"错误），应使用 JOIN 或窗口函数替代
+**别名规则：同一SELECT中不能引用本层定义的别名，使用完整表达式或多层CTE；CTE中必须列出所有后续需要的字段**
 数值格式化：所有数值列和聚合结果必须使用 ROUND(column, 2) 保留两位小数
 图表优先：默认使用图表，分类对比用bar/pie，时序用line/area，仅明细记录用table
 可用方式：{display_type}
@@ -139,6 +151,7 @@ _ANALYSIS_CONSTRAINTS_EN = """
 Column rules: Chinese/digit-starting/special chars need double quotes
 String matching rules: String conditions in WHERE clause must exactly match actual values in data, cannot arbitrarily replace characters (e.g., "和" cannot be replaced with "与"), recommend using LIKE or IN operators based on actual data values
 Subquery rules: NEVER use subqueries in SELECT list that return multiple rows (causes "More than one row returned" error), use JOIN or window functions instead
+**Alias rules: Cannot reference aliases within same SELECT, use full expressions or multi-layer CTEs; CTE must list all fields needed subsequently**
 Numeric formatting: All numeric columns and aggregate results must use ROUND(column, 2) to retain 2 decimal places
 Chart priority: Default to charts, categorical use bar/pie, time-series use line/area, only detailed records use table
 Available types: {display_type}
@@ -149,8 +162,7 @@ Display order: Data summary → Chart visualization → SQL query
 _EXAMPLES_ZH = """
 【示例 - 时间趋势，使用折线图】：
 user: 看一下销售趋势
-assistant: 为您展示销售趋势变化：
-<api-call><name>response_line_chart</name><args><sql>
+assistant: <api-call><name>response_line_chart</name><args><sql>
 SELECT "日期", ROUND(SUM("销售额"), 2) AS "销售额"
 FROM data_analysis_table
 WHERE "日期" IS NOT NULL
@@ -161,15 +173,29 @@ ORDER BY "日期";
 """
 
 _EXAMPLES_EN = """
-【Example  - Time trend, use line chart】：
+【Example 1 - Time trend】：
 user: Show sales trend
-assistant: Displaying sales trend:
-<api-call><name>response_line_chart</name><args><sql>
+assistant: <api-call><name>response_line_chart</name><args><sql>
 SELECT "date", ROUND(SUM("sales"), 2) AS "sales"
 FROM data_analysis_table
 WHERE "date" IS NOT NULL
 GROUP BY "date"
 ORDER BY "date";
+</sql></args></api-call>
+
+【Example 2 - Per-capita calculation (multi-layer CTE)】：
+user: Per-capita bonus by department
+assistant: <api-call><name>response_table</name><args><sql>
+WITH base AS (
+  SELECT "dept", 
+    ROUND(SUM("2025_bonus"), 2) AS "total",
+    ROUND(COUNT("emp_id"), 2) AS "count"
+  FROM data_analysis_table GROUP BY "dept"
+)
+SELECT "dept", 
+  ROUND("total" / NULLIF("count", 0), 2) AS "per_capita",
+  "count"
+FROM base ORDER BY "per_capita" DESC;
 </sql></args></api-call>
 
 """
