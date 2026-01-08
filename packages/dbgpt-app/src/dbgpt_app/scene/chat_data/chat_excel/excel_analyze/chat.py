@@ -1041,6 +1041,18 @@ class ChatExcel(BaseChat):
 
                 rewrite_agent = QueryRewriteAgent(self.llm_client, self.llm_model)
                 
+                # 获取样本数据用于query改写
+                try:
+                    sample_data = await blocking_func_to_async(
+                        self._executor, 
+                        self.excel_reader.get_sample_data, 
+                        self._curr_table,
+                        2  # 只需要2行样本数据
+                    )
+                except Exception as e:
+                    logger.warning(f"获取样本数据失败: {e}")
+                    sample_data = None
+                
                 # 流式输出查询改写结果
                 rewrite_result = None
                 
@@ -1049,6 +1061,7 @@ class ChatExcel(BaseChat):
                     data_schema_json,
                     table_schema,
                     chat_history,
+                    sample_rows=sample_data,
                 ):
                     if isinstance(chunk, str):
                         # 流式输出原始文本（JSON格式）
@@ -1493,8 +1506,8 @@ class ChatExcel(BaseChat):
             detected_language = getattr(self, "_detected_language", "zh")
             is_english = detected_language == "en"
             
-            # 检查数据量是否过大（超过5条记录），如果过大则使用轻量级prompt
-            use_lightweight_summary = total_result_count > 5
+            # 检查数据量是否过大（超过20条记录），如果过大则使用轻量级prompt
+            use_lightweight_summary = total_result_count > 20
 
             history_context = ""
             if self.history_messages and len(self.history_messages) > 0:
@@ -1806,6 +1819,7 @@ Please output the JSON directly, without any other text:"""  # noqa: E501
                         role=ModelMessageRoleType.HUMAN, content=summary_prompt
                     )
                 ],
+                temperature=0.3,
                 max_new_tokens=2048,
                 context=ModelRequestContext(stream=True),
             )

@@ -9,61 +9,68 @@ from pathlib import Path
 # ========== 配置区域 - 在这里修改 ==========
 
 # 数据库文件路径
-DB_PATH = "/home/adminstrator/work/FinAI/packages/pilot/meta_data/excel_dbs/excel_7a8cb57b.duckdb"
+DB_PATH = "/Users/luchun/Desktop/work/FinAI/packages/pilot/meta_data/excel_dbs/excel_7dee5935.duckdb"
 
 # 表名
 TABLE_NAME = "奖金数据模版_final"
 
 # 要执行的SQL (支持多条,用列表)
 SQL_QUERIES = [
-    # 示例1: 查看前5行数据
-    f'''
-    WITH
-  department_summary AS (
+    '''
+WITH
+  department_bonus AS (
     SELECT
       "基本信息(BasicInfo)-部门" AS "部门",
-      COUNT("基本信息(BasicInfo)-员工ID") AS "员工人数",
+      ROUND(SUM("本次奖金(BonusofThisYear)-提交特别奖金(T0)(CNY)"), 2) AS "2025年提交金额",
+      ROUND(SUM("本次-下发(CNY)"), 2) AS "2025年下发金额",
       ROUND(
-        SUM("本次合计(TotalofThisYear)-合计金额(CNY)") / COUNT("基本信息(BasicInfo)-员工ID"),
+        SUM(
+          "上年度参考信息(ReferenceInfoofLastYear)-2024提交特别奖金(T0)(CNY)"
+        ),
         2
-      ) AS "2025年人均奖金",
+      ) AS "2024年提交金额",
       ROUND(
-        SUM("上年度参考(ReferenceInfo)-2024合计金额(CNY)") / COUNT("基本信息(BasicInfo)-员工ID"),
+        SUM(
+          "上年度参考信息(ReferenceInfoofLastYear)-2024(T+T0)金额(CNY)"
+        ),
         2
-      ) AS "2024年人均奖金"
+      ) AS "2024年下发金额"
     FROM
       "奖金数据模版_final"
     WHERE
-      "本次合计(TotalofThisYear)-合计金额(CNY)" IS NOT NULL
-      AND "上年度参考(ReferenceInfo)-2024合计金额(CNY)" IS NOT NULL
+      "本次奖金(BonusofThisYear)-提交特别奖金(T0)(CNY)" IS NOT NULL
+      AND "本次-下发(CNY)" IS NOT NULL
+      AND "上年度参考信息(ReferenceInfoofLastYear)-2024提交特别奖金(T0)(CNY)" IS NOT NULL
+      AND "上年度参考信息(ReferenceInfoofLastYear)-2024(T+T0)金额(CNY)" IS NOT NULL
     GROUP BY
       "基本信息(BasicInfo)-部门"
   ),
-  yoy_calculation AS (
+  bonus_changes AS (
     SELECT
       "部门",
-      "员工人数",
-      "2025年人均奖金",
-      "2024年人均奖金",
+      "2025年提交金额",
+      "2024年提交金额",
+      "2025年下发金额",
+      "2024年下发金额",
+      ROUND(("2025年提交金额" - "2024年提交金额"), 2) AS "提交金额变化",
+      ROUND(("2025年下发金额" - "2024年下发金额"), 2) AS "下发金额变化",
       ROUND(
-        (("2025年人均奖金" - "2024年人均奖金") / "2024年人均奖金") * 100,
+        ("2025年提交金额" - "2024年提交金额") + ("2025年下发金额" - "2024年下发金额"),
         2
-      ) AS "YOY增长率(%)",
-      ROUND(("2025年人均奖金" - "2024年人均奖金"), 2) AS "变化金额"
+      ) AS "总变化金额"
     FROM
-      department_summary
+      department_bonus
   )
 SELECT
   "部门",
-  "员工人数",
-  "2025年人均奖金",
-  "2024年人均奖金",
-  "YOY增长率(%)",
-  "变化金额"
+  "提交金额变化",
+  "下发金额变化"
 FROM
-  yoy_calculation
+  bonus_changes
 ORDER BY
-  "部门";
+  "总变化金额" DESC
+LIMIT
+  1;
     ''',
     
 ]

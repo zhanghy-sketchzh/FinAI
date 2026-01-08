@@ -17,6 +17,14 @@ class JSONParseError(Exception):
     pass
 
 
+class InvalidColumnError(Exception):
+    """自定义异常：字段名不存在"""
+
+    def __init__(self, message: str, invalid_columns: list):
+        super().__init__(message)
+        self.invalid_columns = invalid_columns
+
+
 def detect_language(text: str) -> str:
     """
     检测文本的主要语言
@@ -68,17 +76,93 @@ class QueryRewriteAgent:
         self.llm_client = llm_client
         self.model_name = model_name
 
+    def _extract_valid_column_names(self, table_schema_json: str) -> set:
+        """
+        从schema中提取所有有效的字段名
+        
+        Returns:
+            有效字段名的集合
+        """
+        try:
+            if isinstance(table_schema_json, str):
+                schema_obj = json.loads(table_schema_json)
+            else:
+                schema_obj = table_schema_json
+
+            if not isinstance(schema_obj, dict):
+                return set()
+
+            columns = schema_obj.get("columns", [])
+            return {col.get("column_name", "") for col in columns if col.get("column_name")}
+        except Exception as e:
+            logger.warning(f"提取字段名失败: {e}")
+            return set()
+
+    def _simplify_schema_for_rewrite(self, table_schema_json: str) -> str:
+        """
+        精简schema用于query改写，只保留必要字段信息
+        移除 suggested_questions_zh、suggested_questions_en 等不必要字段
+        """
+        try:
+            if isinstance(table_schema_json, str):
+                schema_obj = json.loads(table_schema_json)
+            else:
+                schema_obj = table_schema_json
+
+            if not isinstance(schema_obj, dict):
+                return table_schema_json
+
+            # 只保留columns字段，移除建议问题等
+            simplified = {}
+            if "columns" in schema_obj:
+                # 精简每个列的信息
+                simplified_columns = []
+                for col in schema_obj["columns"]:
+                    simplified_col = {
+                        "column_name": col.get("column_name", ""),
+                        "data_type": col.get("data_type", ""),
+                    }
+                    # 保留关键字段标记
+                    if col.get("is_key_field"):
+                        simplified_col["is_key_field"] = True
+                    # 保留业务知识
+                    if col.get("domain_knowledge"):
+                        simplified_col["domain_knowledge"] = col["domain_knowledge"]
+                    # 保留分类字段的可选值（精简版）
+                    if col.get("unique_values_top20"):
+                        values = col["unique_values_top20"]
+                        # 最多保留10个值
+                        simplified_col["possible_values"] = values[:10] if len(values) > 10 else values
+                    # 保留数值统计摘要
+                    if col.get("statistics_summary"):
+                        simplified_col["stats"] = col["statistics_summary"]
+                    simplified_columns.append(simplified_col)
+                simplified["columns"] = simplified_columns
+
+            # 保留表名等基本信息
+            if "table_name" in schema_obj:
+                simplified["table_name"] = schema_obj["table_name"]
+
+            return json.dumps(simplified, ensure_ascii=False, indent=2)
+        except Exception as e:
+            logger.warning(f"精简schema失败: {e}，使用原始schema")
+            return table_schema_json if isinstance(table_schema_json, str) else json.dumps(table_schema_json, ensure_ascii=False)
+
     async def rewrite_query_stream(
         self,
         user_query: str,
         table_schema_json: str,
         table_description: str,
         chat_history: list = None,
+        sample_rows: list = None,
     ) -> AsyncIterator[Union[str, Dict]]:
         """
         流式改写用户query
         
         先流式输出LLM的原始输出（文本和JSON），然后输出解析后的结果
+        
+        Args:
+            sample_rows: 样本数据行，格式为 [(columns, data_rows)] 或直接的行列表
         
         Yields:
             str: 流式输出的原始文本chunk
@@ -96,6 +180,7 @@ class QueryRewriteAgent:
                     table_schema_json,
                     table_description,
                     chat_history=chat_history,
+                    sample_rows=sample_rows,
                 ):
                     if isinstance(chunk, str):
                         # 流式输出原始文本chunk
@@ -306,16 +391,121 @@ class QueryRewriteAgent:
         else:
             return "基于用户问题进行标准的数据查询和分析"
 
+    def _format_sample_rows(self, sample_rows: list) -> str:
+        """
+        格式化从外部传入的样本数据（列名只显示一次）
+        
+        Args:
+            sample_rows: 格式为 (columns, data_rows) 的元组，
+                        其中 columns 是列名列表，data_rows 是数据行列表
+        """
+        try:
+            if not sample_rows:
+                return ""
+            
+            # 检查是否是 (columns, data_rows) 格式
+            if isinstance(sample_rows, tuple) and len(sample_rows) == 2:
+                columns, data_rows = sample_rows
+                if not data_rows or not columns:
+                    return ""
+                
+                # 先显示列名
+                lines = [f"列名: {json.dumps(list(columns), ensure_ascii=False)}"]
+                
+                # 只取前2行，只显示值
+                for i, row in enumerate(data_rows[:2], 1):
+                    values = []
+                    for v in row:
+                        if v is None or (isinstance(v, float) and str(v) == 'nan'):
+                            values.append(None)
+                        elif hasattr(v, 'strftime'):
+                            values.append(v.strftime("%Y-%m-%d"))
+                        elif isinstance(v, (int, float, bool)):
+                            values.append(v)
+                        else:
+                            values.append(str(v))
+                    lines.append(f"行{i}: {json.dumps(values, ensure_ascii=False)}")
+                return "\n".join(lines)
+            
+            # 如果是其他格式（直接的行列表，每行是dict），提取共用列名
+            if isinstance(sample_rows, list) and len(sample_rows) > 0:
+                first_row = sample_rows[0]
+                if isinstance(first_row, dict):
+                    columns = list(first_row.keys())
+                    lines = [f"列名: {json.dumps(columns, ensure_ascii=False)}"]
+                    for i, row in enumerate(sample_rows[:2], 1):
+                        values = [row.get(col) for col in columns]
+                        lines.append(f"行{i}: {json.dumps(values, ensure_ascii=False)}")
+                    return "\n".join(lines)
+                else:
+                    # 非dict格式，直接输出
+                    lines = []
+                    for i, row in enumerate(sample_rows[:2], 1):
+                        lines.append(f"行{i}: {str(row)}")
+                    return "\n".join(lines)
+            
+            return ""
+        except Exception as e:
+            logger.warning(f"格式化样本数据失败: {e}")
+            return ""
+
+    def _extract_sample_rows(self, table_schema_json: str) -> str:
+        """
+        从schema中提取样本数据并格式化为字符串（列名只显示一次）
+        """
+        try:
+            if isinstance(table_schema_json, str):
+                schema_obj = json.loads(table_schema_json)
+            else:
+                schema_obj = table_schema_json
+
+            sample_rows = schema_obj.get("sample_rows", [])
+            if not sample_rows:
+                return ""
+
+            # 提取列名（从第一行的keys）
+            first_row = sample_rows[0]
+            if isinstance(first_row, dict):
+                columns = list(first_row.keys())
+                lines = [f"列名: {json.dumps(columns, ensure_ascii=False)}"]
+                for i, row in enumerate(sample_rows[:2], 1):
+                    values = [row.get(col) for col in columns]
+                    lines.append(f"行{i}: {json.dumps(values, ensure_ascii=False)}")
+                return "\n".join(lines)
+            else:
+                # 非dict格式
+                lines = []
+                for i, row in enumerate(sample_rows[:2], 1):
+                    lines.append(f"行{i}: {json.dumps(row, ensure_ascii=False)}")
+                return "\n".join(lines)
+        except Exception as e:
+            logger.warning(f"提取样本数据失败: {e}")
+            return ""
+
     def _build_rewrite_prompt(
         self,
         user_query: str,
         table_schema_json: str,
         table_description: str,
         chat_history: list = None,
+        sample_rows: list = None,
     ) -> str:
         """
         构建改写prompt
+        
+        Args:
+            sample_rows: 样本数据，格式为 (columns, data_rows) 或直接从参数传入
         """
+        # 精简schema，移除建议问题等不必要信息
+        simplified_schema = self._simplify_schema_for_rewrite(table_schema_json)
+        
+        # 提取样本数据：优先使用传入的 sample_rows，其次从 schema 中提取
+        sample_rows_str = ""
+        if sample_rows:
+            sample_rows_str = self._format_sample_rows(sample_rows)
+        if not sample_rows_str:
+            sample_rows_str = self._extract_sample_rows(table_schema_json)
+        
         # 构建历史对话上下文
         history_context = ""
         if chat_history and len(chat_history) > 0:
@@ -355,10 +545,13 @@ class QueryRewriteAgent:
 5. 给出清晰的分析逻辑
 6. 如果用户在对话或当前历史问答上下文中纠正或补充了字段的使用方法、业务规则、数据处理技巧等关键知识，请提取并记录作为domain_knowledge字段
 
-=== 数据表字段详细信息 ===
-{table_schema_json}
+=== 数据表字段信息 ===
+{simplified_schema}
 
 **注意**：字段信息中可能包含 `domain_knowledge` 字段，这是之前从用户对话中学习到的业务知识，请优先参考使用。
+
+=== 真实数据样本（2行） ===
+{sample_rows_str if sample_rows_str else "暂无样本数据"}
 
 === 数据表描述 ===
 {table_description}
@@ -409,9 +602,14 @@ class QueryRewriteAgent:
 - "rewritten_query"、"usage"、"analysis_suggestions"、"analysis_logic" 等字段必须使用**中文**
 - 即使表字段名是中英文混合，你的描述和分析也必须使用**中文**
 
-**重要 - 字符串精确匹配要求**：
+**重要 - 字符串/字段精确匹配要求**：
 - 在改写问题时，如果用户提到了具体的部门名称、分类值等字符串，必须保持完全一致
 - 如果用户问题中包含具体的字符串值，在"rewritten_query"中必须保持原样，不能修改
+
+**严格要求 - 字段名必须来自提供的列表**：
+- relevant_columns 中的 column_name 必须**严格从上面提供的字段信息中选择**
+- **禁止推测、创造或编造任何不在字段列表中的字段名**
+- 如果找不到完全匹配的字段，宁可不填写该字段，也不要编造类似的字段名
 
 现在请结合历史上下文及用户当前问题，分析用户的真实意图，补充改写当前问题并用中文输出JSON：
 """
@@ -424,10 +622,13 @@ class QueryRewriteAgent:
 5. Give a clear analysis logic
 6. If the user has corrected or supplemented field usage methods, business rules, data processing techniques, or other key knowledge in the conversation or current historical Q&A context, extract and record it as the domain_knowledge field
 
-=== Data Table Field Details ===
-{table_schema_json}
+=== Data Table Field Information ===
+{simplified_schema}
 
 **Note**: The field information may contain a `domain_knowledge` field, which is business knowledge learned from previous user conversations. Please prioritize using this.
+
+=== Sample Data (2 rows) ===
+{sample_rows_str if sample_rows_str else "No sample data available"}
 
 === Data Table Description ===
 {table_description}
@@ -483,6 +684,11 @@ Please strictly follow the following JSON format:
 - When rewriting the question, if the user mentions specific department names, category values, or other strings, they must be kept exactly as they are
 - If the user's question contains specific string values, they must be kept unchanged in "rewritten_query"
 
+**STRICT REQUIREMENT - Column names must come from the provided list**:
+- The column_name in relevant_columns MUST be **strictly selected from the field information provided above**
+- **DO NOT guess, create, or fabricate any column names that are not in the field list**
+- If you cannot find an exact match, leave it out rather than inventing a similar column name
+
 Now please combine the historical context and the user's current question, analyze the user's real intent, enhance the current question and output JSON IN ENGLISH:
 """
         return prompt
@@ -493,9 +699,17 @@ Now please combine the historical context and the user's current question, analy
         table_schema_json: str,
         table_description: str,
         chat_history: list = None,
+        sample_rows: list = None,
+        invalid_columns_hint: list = None,
+        retry_count: int = 0,
     ) -> AsyncIterator[Union[str, Dict]]:
         """
         使用LLM进行流式Query改写
+        
+        Args:
+            sample_rows: 样本数据行
+            invalid_columns_hint: 上次返回的无效字段名列表，用于提示LLM重新生成
+            retry_count: 当前重试次数
         
         Yields:
             str: 流式输出的原始文本chunk（累积的完整文本）
@@ -510,10 +724,44 @@ Now please combine the historical context and the user's current question, analy
             ModelRequestContext,
         )
 
+        MAX_RETRY = 2  # 最多重试2次
+
+        # 提取有效字段名用于校验
+        valid_column_names = self._extract_valid_column_names(table_schema_json)
+        logger.debug(f"有效字段名数量: {len(valid_column_names)}")
+
+        # 检测用户语言
+        user_language = detect_language(user_query)
+
         # 构建prompt
         prompt = self._build_rewrite_prompt(
-            user_query, table_schema_json, table_description, chat_history=chat_history
+            user_query, table_schema_json, table_description, 
+            chat_history=chat_history, sample_rows=sample_rows
         )
+        
+        # 如果有无效字段提示，追加到prompt中（根据语言选择）
+        if invalid_columns_hint:
+            if user_language == "zh":
+                correction_hint = f"""
+
+**错误纠正**：
+你上次返回的以下字段名在数据表中不存在，请勿使用：
+{invalid_columns_hint}
+
+请仔细检查上面提供的字段列表，只使用实际存在的字段名重新生成。如果找不到对应的字段，请在analysis_suggestions中说明该分析可能无法完成。
+"""
+            else:
+                correction_hint = f"""
+
+**Error Correction**:
+The following column names you returned do not exist in the data table, DO NOT use them:
+{invalid_columns_hint}
+
+Please carefully check the field list provided above and regenerate using only column names that actually exist. If you cannot find the corresponding field, please explain in analysis_suggestions that this analysis may not be possible.
+"""
+            prompt += correction_hint
+            logger.info(f"🔄 重试第{retry_count}次，添加无效字段提示: {invalid_columns_hint}")
+        
         logger.debug(f"🔍 query_rewrite_agent prompt: {prompt[:200]}...")
         
         # 调用LLM（流式）
@@ -576,20 +824,47 @@ Now please combine the historical context and the user's current question, analy
         else:
             raise Exception(f"Unexpected response type: {type(stream_response)}")
 
-        # 流式输出完成后，解析结果并返回
+        # 流式输出完成后，解析结果并返回（带字段名校验）
         if full_text:
             try:
-                result = self._parse_rewrite_result(full_text, user_query)
+                result = self._parse_rewrite_result(
+                    full_text, user_query, valid_column_names=valid_column_names
+                )
                 yield result
+            except InvalidColumnError as e:
+                # 字段名无效，尝试重试
+                if retry_count < MAX_RETRY:
+                    logger.warning(f"⚠️ 检测到无效字段名，触发重试 ({retry_count + 1}/{MAX_RETRY})")
+                    # 递归调用，传入无效字段提示
+                    async for chunk in self._llm_based_rewrite_stream(
+                        user_query,
+                        table_schema_json,
+                        table_description,
+                        chat_history=chat_history,
+                        sample_rows=sample_rows,
+                        invalid_columns_hint=e.invalid_columns,
+                        retry_count=retry_count + 1,
+                    ):
+                        yield chunk
+                else:
+                    logger.error(f"❌ 重试{MAX_RETRY}次后仍有无效字段，放弃重试")
+                    raise JSONParseError(str(e))
             except JSONParseError as e:
                 logger.error(f"JSON解析失败: {e}")
                 raise
 
-    def _parse_rewrite_result(self, llm_output: str, original_query: str) -> Dict:
+    def _parse_rewrite_result(
+        self, llm_output: str, original_query: str, valid_column_names: set = None
+    ) -> Dict:
         """
         解析LLM输出的JSON结果
 
-        如果解析失败，抛出 JSONParseError 异常以触发重试机制
+        如果解析失败或字段名不存在，抛出 JSONParseError 异常以触发重试机制
+        
+        Args:
+            llm_output: LLM输出的文本
+            original_query: 原始用户问题
+            valid_column_names: 有效的字段名集合，用于校验
         """
         try:
             # 提取JSON部分
@@ -609,15 +884,27 @@ Now please combine the historical context and the user's current question, analy
                     logger.error("JSON缺少必要字段 'rewritten_query'")
                     raise JSONParseError("JSON缺少必要字段 'rewritten_query'")
 
-                # 验证 relevant_columns 格式
+                # 验证 relevant_columns 格式和字段名是否存在
                 relevant_columns = result.get("relevant_columns", [])
                 if relevant_columns:
+                    invalid_columns = []
                     for idx, col in enumerate(relevant_columns):
                         if not isinstance(col, dict) or "column_name" not in col:
                             logger.error(f"relevant_columns[{idx}] 格式错误: {col}")
                             raise JSONParseError(
                                 f"relevant_columns[{idx}] 缺少 'column_name' 字段"
                             )
+                        
+                        # 校验字段名是否存在于表中
+                        col_name = col.get("column_name", "")
+                        if valid_column_names and col_name not in valid_column_names:
+                            invalid_columns.append(col_name)
+                    
+                    # 如果有无效字段名，抛出 InvalidColumnError 触发重试
+                    if invalid_columns:
+                        error_msg = f"以下字段名不存在于数据表中: {invalid_columns}"
+                        logger.warning(f"⚠️ 字段校验失败: {error_msg}，将触发重试")
+                        raise InvalidColumnError(error_msg, invalid_columns)
 
                 # 添加原始问题
                 result["original_query"] = original_query
@@ -633,7 +920,7 @@ Now please combine the historical context and the user's current question, analy
                             "knowledge": knowledge,
                         }
 
-                logger.info("✅ JSON解析成功")
+                logger.info("✅ JSON解析成功，字段校验通过")
                 return result
             else:
                 logger.error("无法从LLM输出中提取JSON")

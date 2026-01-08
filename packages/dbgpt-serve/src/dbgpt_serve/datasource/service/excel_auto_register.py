@@ -2330,12 +2330,16 @@ class ExcelAutoRegisterService:
                 enriched_columns, df
             )
 
+        # 获取2行样本数据用于query改写
+        sample_rows = self._get_sample_rows(df, n=2)
+
         return json.dumps(
             {
                 "table_name": table_name,
                 "table_description": schema.get("table_description", ""),
                 "id_columns": id_columns,  # 保留ID列信息
                 "columns": enriched_columns,
+                "sample_rows": sample_rows,  # 添加样本数据
                 "suggested_questions_zh": suggested_questions_zh[:9],  # 确保最多9个
                 "suggested_questions_en": suggested_questions_en[:9],  # 确保最多9个
             },
@@ -2684,22 +2688,22 @@ class ExcelAutoRegisterService:
             dtype: 数据类型
             
         Returns:
-            字段描述
+            字段描述（不包含字段名，避免重复）
         """
         # 根据数据类型生成基础描述
         if dtype in ["int64", "float64", "int32", "float32", "Int64"]:
-            return f"{col_name}（数值类型）"
+            return "数值类型"
         elif "date" in dtype.lower() or "time" in dtype.lower():
-            return f"{col_name}（日期时间类型）"
+            return "日期时间类型"
         elif dtype in ["object", "category"]:
             # 对于分类字段，显示唯一值数量
             unique_count = len(col_data.dropna().unique())
             if unique_count <= 20:
-                return f"{col_name}（分类字段，{unique_count}个可选值）"
+                return f"分类字段，{unique_count}个可选值"
             else:
-                return f"{col_name}（文本类型）"
+                return "文本类型"
         else:
-            return f"{col_name}（{dtype}类型）"
+            return f"{dtype}类型"
     
     def _get_sample_values(self, col_data: pd.Series, n: int = 3) -> list:
         """
@@ -2710,6 +2714,40 @@ class ExcelAutoRegisterService:
             sample = non_null_values[:n].tolist()
             return [str(v) for v in sample]
         return []
+
+    def _get_sample_rows(self, df: pd.DataFrame, n: int = 2) -> list:
+        """
+        获取n行样本数据，用于query改写时提供真实数据参考
+        
+        Args:
+            df: DataFrame对象
+            n: 样本行数
+            
+        Returns:
+            样本数据列表，每行是一个字典
+        """
+        try:
+            # 取前n行数据
+            sample_df = df.head(n)
+            rows = []
+            for _, row in sample_df.iterrows():
+                row_dict = {}
+                for col in sample_df.columns:
+                    val = row[col]
+                    # 转换为可序列化的格式
+                    if pd.isna(val):
+                        row_dict[col] = None
+                    elif isinstance(val, (pd.Timestamp, datetime)):
+                        row_dict[col] = val.strftime("%Y-%m-%d %H:%M:%S") if hasattr(val, 'strftime') else str(val)
+                    elif isinstance(val, (int, float)):
+                        row_dict[col] = val
+                    else:
+                        row_dict[col] = str(val)
+                rows.append(row_dict)
+            return rows
+        except Exception as e:
+            logger.warning(f"获取样本数据失败: {e}")
+            return []
 
     def _is_potential_key_field(self, col_name: str, col_data: pd.Series) -> bool:
         """

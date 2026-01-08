@@ -410,8 +410,8 @@ async def file_upload(
                         if model_name:
                             default_model = model_name
                         else:
-                            # 获取当前可用的模型列表
-                            available_models = worker_manager.sync_supported_models()
+                            # 使用异步方法获取当前可用的模型列表
+                            available_models = await worker_manager.supported_models()
                             if available_models and len(available_models) > 0:
                                 default_model = available_models[0].model
                             else:

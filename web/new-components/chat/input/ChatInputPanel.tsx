@@ -25,6 +25,7 @@ const ChatInputPanel: React.ForwardRefRenderFunction<any, { ctrl: AbortControlle
     setResourceValue,
     refreshDialogList,
     history,
+    scrollRef,
   } = useContext(ChatContentContext);
 
   const searchParams = useSearchParams();
@@ -316,6 +317,13 @@ const ChatInputPanel: React.ForwardRefRenderFunction<any, { ctrl: AbortControlle
       return;
     }
     await onSubmit(question);
+    // 滚动到底部
+    setTimeout(() => {
+      scrollRef.current?.scrollTo({
+        top: scrollRef.current?.scrollHeight,
+        behavior: 'smooth',
+      });
+    }, 100);
   };
 
   const onSubmit = async (inputText?: string) => {
