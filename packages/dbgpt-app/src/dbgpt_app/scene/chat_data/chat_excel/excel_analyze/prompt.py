@@ -50,6 +50,13 @@ _DUCKDB_RULES_ZH = """
 - **禁止字符替换**：不能随意替换字符
 - **建议做法**：如果不确定精确值，可以使用LIKE或IN操作符，但必须基于实际数据中的值
 
+### 【WHERE子句逻辑优先级】：
+**【极其重要】混用AND和OR时必须用括号明确优先级：**
+- ❌ 错误：`WHERE "部门"='A' OR "部门"='B' AND "年份"=2025`（逻辑不清晰，易误解）
+- ✅ 正确：`WHERE ("部门"='A' OR "部门"='B') AND "年份"=2025`（先判断部门，再判断年份）
+- ✅ 正确：`WHERE "部门"='A' OR ("部门"='B' AND "年份"=2025)`（A部门全部 或 B部门2025年）
+**关键原则：根据用户意图和对话逻辑，用括号明确表达条件的优先级和组合关系**
+
 ### 【GROUP BY 关键规则】：
 1. SELECT 中的非聚合列必须在 GROUP BY 中
 2. ORDER BY 中的列必须在前面的 CTE 或查询中被正确选择
@@ -58,8 +65,8 @@ _DUCKDB_RULES_ZH = """
 
 ### 【CTE和别名规则】：
 **【极其重要】同一SELECT中不能引用本SELECT定义的别名：**
-- 或使用多层CTE：第一层计算基础值，第二层引用第一层的别名进行计算
 **CTE字段传递：后续需要的字段必须在CTE的SELECT中明确列出**
+**人均计算：使用 NULLIF(分母, 0) 避免除零，如 ROUND(SUM("金额")/NULLIF(COUNT(*), 0), 2)**
 
 ### 【子查询使用规则】：
 - **禁止在 SELECT 列表中使用返回多行的子查询**（会导致"More than one row returned"错误）
@@ -94,10 +101,22 @@ _DUCKDB_RULES_EN = """
 - **Table name MUST use the complete table name specified in the constraints, cannot be simplified, abbreviated, or modified**
 - **In all SQL FROM clauses, you MUST use the exact table name specified in the constraints**
 
+**【CRITICAL】Column Name Must Match Exactly:**
+- Must use **complete column names** from table structure, including all parentheses, hyphens and special characters
+- Column names must **match character-by-character** the definitions in table structure
+- **String matching must be exact**: When using string conditions in WHERE clause, must completely match actual values in data, cannot arbitrarily replace characters (e.g., "and" cannot be replaced with "&", "dept" cannot be abbreviated)
+
 ### 【String Matching Precision Rules】：
 - **Must match exactly**: When using string conditions in WHERE clause, must exactly match the actual values in the data
 - **No character substitution**: Cannot arbitrarily replace characters
 - **Recommended approach**: If unsure of exact value, use LIKE or IN operators, but must be based on actual values in the data
+
+### 【WHERE Clause Logic Priority】：
+**【CRITICAL】Must use parentheses to clarify priority when mixing AND/OR:**
+- ❌ Wrong: `WHERE "dept"='A' OR "dept"='B' AND "year"=2025` (ambiguous logic)
+- ✅ Correct: `WHERE ("dept"='A' OR "dept"='B') AND "year"=2025` (dept first, then year)
+- ✅ Correct: `WHERE "dept"='A' OR ("dept"='B' AND "year"=2025)` (all A or B in 2025)
+**Key principle: Use parentheses to clearly express condition priority and combination based on user intent and conversation logic**
 
 ### 【GROUP BY Key Rules】：
 1. Non-aggregate columns in SELECT must be in GROUP BY
@@ -136,6 +155,7 @@ _ANALYSIS_CONSTRAINTS_ZH = """
 
 列名规则：中文/数字开头/特殊字符必须用双引号;不要使用 UNION / UNION ALL，如需多个结果请分别查询；时间戳处理使用 to_timestamp() 而非直接 CAST；注释行必须单独成行，不要放在 SQL 语句的同一行
 字符串匹配规则：WHERE子句中的字符串条件必须完全匹配数据中的实际值，不能随意替换字符（如"和"不能替换为"与"），建议使用LIKE或IN操作符基于实际数据值
+**WHERE逻辑规则：混用AND和OR时必须用括号明确优先级，根据用户意图正确组合条件**
 子查询规则：禁止在 SELECT 列表中使用返回多行的子查询（会导致"More than one row returned"错误），应使用 JOIN 或窗口函数替代
 **别名规则：同一SELECT中不能引用本层定义的别名，使用完整表达式或多层CTE；CTE中必须列出所有后续需要的字段**
 数值格式化：所有数值列和聚合结果必须使用 ROUND(column, 2) 保留两位小数
@@ -150,6 +170,7 @@ _ANALYSIS_CONSTRAINTS_EN = """
 
 Column rules: Chinese/digit-starting/special chars need double quotes
 String matching rules: String conditions in WHERE clause must exactly match actual values in data, cannot arbitrarily replace characters (e.g., "和" cannot be replaced with "与"), recommend using LIKE or IN operators based on actual data values
+**WHERE logic rules: Must use parentheses to clarify priority when mixing AND/OR, correctly combine conditions based on user intent**
 Subquery rules: NEVER use subqueries in SELECT list that return multiple rows (causes "More than one row returned" error), use JOIN or window functions instead
 **Alias rules: Cannot reference aliases within same SELECT, use full expressions or multi-layer CTEs; CTE must list all fields needed subsequently**
 Numeric formatting: All numeric columns and aggregate results must use ROUND(column, 2) to retain 2 decimal places
@@ -160,42 +181,29 @@ Display order: Data summary → Chart visualization → SQL query
 
 # ===== 可复用的示例块 =====
 _EXAMPLES_ZH = """
-【示例 - 时间趋势，使用折线图】：
-user: 看一下销售趋势
-assistant: <api-call><name>response_line_chart</name><args><sql>
-SELECT "日期", ROUND(SUM("销售额"), 2) AS "销售额"
+【示例】：
+user: 查看A部门和B部门2025年的数据，或者C部门所有年份的数据
+assistant: <api-call><name>response_table</name><args><sql>
+SELECT "部门", "年份", ROUND(SUM("金额"), 2) AS "总额"
 FROM data_analysis_table
-WHERE "日期" IS NOT NULL
-GROUP BY "日期"
-ORDER BY "日期";
+WHERE (("部门"='A' OR "部门"='B') AND "年份"=2025) 
+   OR "部门"='C'
+GROUP BY "部门", "年份"
+ORDER BY "部门", "年份";
 </sql></args></api-call>
 
 """
 
 _EXAMPLES_EN = """
-【Example 1 - Time trend】：
-user: Show sales trend
-assistant: <api-call><name>response_line_chart</name><args><sql>
-SELECT "date", ROUND(SUM("sales"), 2) AS "sales"
-FROM data_analysis_table
-WHERE "date" IS NOT NULL
-GROUP BY "date"
-ORDER BY "date";
-</sql></args></api-call>
-
-【Example 2 - Per-capita calculation (multi-layer CTE)】：
-user: Per-capita bonus by department
+【Example】：
+user: Show data for dept A and B in 2025, or all years for dept C
 assistant: <api-call><name>response_table</name><args><sql>
-WITH base AS (
-  SELECT "dept", 
-    ROUND(SUM("2025_bonus"), 2) AS "total",
-    ROUND(COUNT("emp_id"), 2) AS "count"
-  FROM data_analysis_table GROUP BY "dept"
-)
-SELECT "dept", 
-  ROUND("total" / NULLIF("count", 0), 2) AS "per_capita",
-  "count"
-FROM base ORDER BY "per_capita" DESC;
+SELECT "dept", "year", ROUND(SUM("amount"), 2) AS "total"
+FROM data_analysis_table
+WHERE (("dept"='A' OR "dept"='B') AND "year"=2025) 
+   OR "dept"='C'
+GROUP BY "dept", "year"
+ORDER BY "dept", "year";
 </sql></args></api-call>
 
 """
