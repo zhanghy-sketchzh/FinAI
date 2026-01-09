@@ -406,26 +406,44 @@ async def file_upload(
                         worker_manager = get_worker_manager()
                         llm_client = DefaultLLMClient(worker_manager)
 
-                        # 从 worker_manager 获取实际可用的模型名称
+                        # 获取模型名称
                         if model_name:
                             default_model = model_name
                         else:
-                            # 使用异步方法获取当前可用的模型列表
-                            available_models = await worker_manager.supported_models()
-                            if available_models and len(available_models) > 0:
-                                default_model = available_models[0].model
+                            # 从 worker_manager 获取当前运行的 LLM 模型实例
+                            from dbgpt.model.parameter import WorkerType
+                            llm_instances = await worker_manager.get_all_model_instances(
+                                WorkerType.LLM.value, healthy_only=True
+                            )
+                            if llm_instances and len(llm_instances) > 0:
+                                default_model = llm_instances[0].worker_key.split("@")[0]
                             else:
-                                default_model = CFG.LLM_MODEL
+                                # 从配置文件获取模型名称
+                                from dbgpt.configs import GLOBAL_SYSTEM_CONFIG
+                                if GLOBAL_SYSTEM_CONFIG and GLOBAL_SYSTEM_CONFIG.exists("models.llms"):
+                                    from dbgpt.core.interface.parameter import LLMDeployModelParameters
+                                    llm_configs = GLOBAL_SYSTEM_CONFIG.parse_config(
+                                        LLMDeployModelParameters,
+                                        prefix="models.llms",
+                                    )
+                                    if llm_configs:
+                                        default_model = llm_configs[0].name
+                                    else:
+                                        default_model = CFG.LLM_MODEL
+                                else:
+                                    default_model = CFG.LLM_MODEL
 
                         logger.info(f"✅ 成功获取LLM客户端，使用模型: {default_model}")
                     except Exception as e:
                         logger.warning(f"⚠️ 获取LLM客户端失败: {e}，将使用fallback方法")
                         llm_client = None
                         default_model = None
-
                     # 自动注册到数据源 - 传递LLM客户端、模型名称、原始文件名和会话ID
+                    # 同时传入 system_app，以便在需要时能够重新获取 LLM 客户端
                     excel_service = ExcelAutoRegisterService(
-                        llm_client=llm_client, model_name=default_model
+                        llm_client=llm_client,
+                        model_name=default_model,
+                        system_app=CFG.SYSTEM_APP,
                     )
 
                     # 检测Excel文件中的sheet数量，如果有多个sheet则自动启用合并模式

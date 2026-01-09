@@ -29,12 +29,14 @@ router = APIRouter()
 global_system_app: Optional[SystemApp] = None
 
 
-def _get_llm_client_and_model():
+async def _get_llm_client_and_model():
     """获取 LLM 客户端和模型名称"""
     try:
         from dbgpt.model.cluster import WorkerManagerFactory
         from dbgpt.model.cluster.client import DefaultLLMClient
         from dbgpt.component import ComponentType
+        from dbgpt._private.config import Config
+        config = Config()
         
         worker_manager = global_system_app.get_component(
             ComponentType.WORKER_MANAGER_FACTORY, WorkerManagerFactory
@@ -42,14 +44,20 @@ def _get_llm_client_and_model():
         
         llm_client = DefaultLLMClient(worker_manager, auto_convert_message=True)
         
-        # 获取可用模型
-        models = worker_manager.sync_supported_models()
-        if models and len(models) > 0:
-            model_name = models[0].model
-            logger.info(f"获取到可用模型: {model_name}")
-            return llm_client, model_name
+        # 直接使用配置中的模型，不再从 worker_supported_models 中选择
+        # 因为 worker_supported_models 可能返回错误的模型（如 DeepSeek-V3）
+        model_name = config.LLM_MODEL
+        print(f"[DEBUG] endpoints._get_llm_client_and_model: using config.LLM_MODEL={model_name}")
+        return llm_client, model_name
     except Exception as e:
         logger.warning(f"获取 LLM 客户端失败: {e}")
+        # 尝试使用配置中的默认模型
+        try:
+            from dbgpt._private.config import Config
+            config = Config()
+            return None, config.LLM_MODEL
+        except Exception:
+            pass
     
     return None, None
 
@@ -364,11 +372,11 @@ async def upload_excel(
             temp_file_path = temp_file.name
 
         # 获取 LLM 客户端和模型
-        llm_client, model_name = _get_llm_client_and_model()
+        llm_client, model_name = await _get_llm_client_and_model()
         
         # 处理 Excel
         excel_service = ExcelAutoRegisterService(
-            llm_client=llm_client, model_name=model_name
+            llm_client=llm_client, model_name=model_name, system_app=global_system_app
         )
         result = await blocking_func_to_async(
             global_system_app,
@@ -415,7 +423,7 @@ async def get_excel_info(
         HTTPException: When Excel info not found
     """
     try:
-        excel_service = ExcelAutoRegisterService()
+        excel_service = ExcelAutoRegisterService(system_app=global_system_app)
         info = await blocking_func_to_async(
             global_system_app, excel_service.get_excel_info, content_hash
         )
@@ -459,7 +467,7 @@ async def update_excel_summary(
         HTTPException: When update fails
     """
     try:
-        excel_service = ExcelAutoRegisterService()
+        excel_service = ExcelAutoRegisterService(system_app=global_system_app)
         await blocking_func_to_async(
             global_system_app,
             excel_service.update_summary_prompt,

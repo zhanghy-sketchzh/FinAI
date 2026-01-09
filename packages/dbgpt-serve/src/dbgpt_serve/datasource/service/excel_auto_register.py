@@ -386,18 +386,22 @@ class ExcelAutoRegisterService:
 
             self._initialized = True
         else:
-            if llm_client is not None:
-                self.llm_client = llm_client
-            if model_name is not None:
-                self.model_name = model_name
+            # 每次都更新 llm_client 和 model_name，避免使用缓存的旧值
+            self.llm_client = llm_client
+            self.model_name = model_name
             if system_app is not None:
                 self._system_app = system_app
-            # 如果当前 model_name 还是 None，尝试获取默认模型
-            elif self.model_name is None:
-                self.model_name = self._get_default_model_name()
 
     def _get_llm_client_and_model(self):
         """获取 LLM 客户端和模型名称"""
+        default_model = None
+        try:
+            from dbgpt._private.config import Config
+            cfg = Config()
+            default_model = cfg.LLM_MODEL
+        except Exception:
+            pass
+        
         if hasattr(self, '_system_app') and self._system_app is not None:
             try:
                 from dbgpt.component import ComponentType
@@ -407,12 +411,13 @@ class ExcelAutoRegisterService:
                 worker_manager = self._system_app.get_component(
                     ComponentType.WORKER_MANAGER_FACTORY, WorkerManagerFactory
                 ).create()
-                models = worker_manager.sync_supported_models()
-                if models:
-                    return DefaultLLMClient(worker_manager, auto_convert_message=True), models[0].model
+                
+                if default_model:
+                    return DefaultLLMClient(worker_manager, auto_convert_message=True), default_model
             except Exception as e:
-                logger.warning(f"获取LLM客户端失败: {e}")
-        return None, None
+                logger.warning(f"创建LLM客户端失败: {e}")
+        
+        return None, default_model
     
     def _get_default_model_name(self) -> Optional[str]:
         """获取默认的 LLM 模型名称"""
@@ -1778,6 +1783,14 @@ class ExcelAutoRegisterService:
         # 没有缓存或强制重新导入，需要完整处理
         logger.info(f"处理Excel: {original_filename}")
 
+        # 只有当 llm_client 或 model_name 为空时，才尝试获取
+        if self.llm_client is None or self.model_name is None:
+            llm_client, model_name = self._get_llm_client_and_model()
+            if self.llm_client is None and llm_client is not None:
+                self.llm_client = llm_client
+            if self.model_name is None and model_name is not None:
+                self.model_name = model_name
+
         # 处理多个sheet
         if merge_sheets and len(target_sheets) > 1:
             sheets_data = []
@@ -1815,14 +1828,6 @@ class ExcelAutoRegisterService:
         df = self._remove_empty_columns(df)
         df = self._remove_duplicate_columns(df)
         df = self._format_date_columns(df)
-        
-        # 确保有 LLM 客户端（如果没有，尝试自动获取）
-        if self.llm_client is None or self.model_name is None:
-            llm_client, model_name = self._get_llm_client_and_model()
-            if llm_client is not None:
-                self.llm_client = llm_client
-            if model_name is not None:
-                self.model_name = model_name
         
         # 使用 LLM 识别 ID 列
         id_columns = self._detect_id_columns_with_llm(df, table_name)
