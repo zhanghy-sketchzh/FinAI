@@ -85,6 +85,11 @@ _DUCKDB_RULES_ZH = """
   - 聚合函数：`SELECT SUM("金额") AS "总金额"` → 应改为：`SELECT ROUND(SUM("金额"), 2) AS "总金额"`
   - 计算列：`SELECT "单价" * "数量" AS "小计"` → 应改为：`SELECT ROUND("单价" * "数量", 2) AS "小计"`
 - **必须对所有数值结果应用 ROUND(column, 2)**，确保输出结果统一保留两位小数
+
+### 【LIMIT 使用规则】：
+- **禁止自动添加 LIMIT**：除非用户明确要求限制返回行数（如"只显示前10条"、"显示前5名"等），否则**严禁**在 SQL 查询中使用 LIMIT 子句
+- **默认展示所有数据**：应该尽可能展示所有符合查询条件的分析数据，让用户看到完整的结果
+- **仅在用户明确要求时使用**：只有当用户明确表达需要限制结果数量时（如"前N条"、"只显示N个"、"限制为N条"等），才可以使用 LIMIT
 """
 
 _DUCKDB_RULES_EN = """
@@ -113,9 +118,6 @@ _DUCKDB_RULES_EN = """
 
 ### 【WHERE Clause Logic Priority】：
 **【CRITICAL】Must use parentheses to clarify priority when mixing AND/OR:**
-- ❌ Wrong: `WHERE "dept"='A' OR "dept"='B' AND "year"=2025` (ambiguous logic)
-- ✅ Correct: `WHERE ("dept"='A' OR "dept"='B') AND "year"=2025` (dept first, then year)
-- ✅ Correct: `WHERE "dept"='A' OR ("dept"='B' AND "year"=2025)` (all A or B in 2025)
 **Key principle: Use parentheses to clearly express condition priority and combination based on user intent and conversation logic**
 
 ### 【GROUP BY Key Rules】：
@@ -146,6 +148,11 @@ _DUCKDB_RULES_EN = """
   - Aggregate function: `SELECT SUM("amount") AS "total"` → Should be: `SELECT ROUND(SUM("amount"), 2) AS "total"`
   - Calculated column: `SELECT "price" * "quantity" AS "subtotal"` → Should be: `SELECT ROUND("price" * "quantity", 2) AS "subtotal"`
 - **Must apply ROUND(column, 2) to all numeric results** to ensure output consistently retains 2 decimal places
+
+### 【LIMIT Usage Rules】：
+- **DO NOT automatically add LIMIT**: Unless the user explicitly requests to limit the number of returned rows (e.g., "show only top 10", "display top 5", etc.), you **MUST NOT** use LIMIT clause in SQL queries
+- **Display all data by default**: Should display all analysis data that meets the query conditions as much as possible, allowing users to see complete results
+- **Use LIMIT only when user explicitly requests**: Only use LIMIT when the user clearly expresses the need to limit result count (e.g., "top N", "only show N", "limit to N rows", etc.)
 """
 
 # ===== 可复用的约束条件块 =====
@@ -159,6 +166,7 @@ _ANALYSIS_CONSTRAINTS_ZH = """
 子查询规则：禁止在 SELECT 列表中使用返回多行的子查询（会导致"More than one row returned"错误），应使用 JOIN 或窗口函数替代
 **别名规则：同一SELECT中不能引用本层定义的别名，使用完整表达式或多层CTE；CTE中必须列出所有后续需要的字段**
 数值格式化：所有数值列和聚合结果必须使用 ROUND(column, 2) 保留两位小数
+**LIMIT规则：禁止自动添加LIMIT，除非用户明确要求限制返回行数，否则应展示所有符合条件的数据**
 图表优先：默认使用图表，分类对比用bar/pie，时序用line/area，仅明细记录用table
 可用方式：{display_type}
 展示顺序：数据摘要 → 图表可视化 → SQL查询
@@ -174,6 +182,7 @@ String matching rules: String conditions in WHERE clause must exactly match actu
 Subquery rules: NEVER use subqueries in SELECT list that return multiple rows (causes "More than one row returned" error), use JOIN or window functions instead
 **Alias rules: Cannot reference aliases within same SELECT, use full expressions or multi-layer CTEs; CTE must list all fields needed subsequently**
 Numeric formatting: All numeric columns and aggregate results must use ROUND(column, 2) to retain 2 decimal places
+**LIMIT rules: DO NOT automatically add LIMIT unless user explicitly requests to limit returned rows, otherwise display all data that meets conditions**
 Chart priority: Default to charts, categorical use bar/pie, time-series use line/area, only detailed records use table
 Available types: {display_type}
 Display order: Data summary → Chart visualization → SQL query
@@ -182,12 +191,11 @@ Display order: Data summary → Chart visualization → SQL query
 # ===== 可复用的示例块 =====
 _EXAMPLES_ZH = """
 【示例】：
-user: 查看A部门和B部门2025年的数据，或者C部门所有年份的数据
+user: 查看非空部门和C部门2025年的数据
 assistant: <api-call><name>response_table</name><args><sql>
 SELECT "部门", "年份", ROUND(SUM("金额"), 2) AS "总额"
 FROM data_analysis_table
-WHERE (("部门"='A' OR "部门"='B') AND "年份"=2025) 
-   OR "部门"='C'
+WHERE (("部门"=null OR "部门"='') AND  "部门"='C'
 GROUP BY "部门", "年份"
 ORDER BY "部门", "年份";
 </sql></args></api-call>
@@ -196,14 +204,13 @@ ORDER BY "部门", "年份";
 
 _EXAMPLES_EN = """
 【Example】：
-user: Show data for dept A and B in 2025, or all years for dept C
+user: Show data for non-empty departments and C departments in 2025
 assistant: <api-call><name>response_table</name><args><sql>
-SELECT "dept", "year", ROUND(SUM("amount"), 2) AS "total"
+SELECT "部门", "年份", ROUND(SUM("金额"), 2) AS "总额"
 FROM data_analysis_table
-WHERE (("dept"='A' OR "dept"='B') AND "year"=2025) 
-   OR "dept"='C'
-GROUP BY "dept", "year"
-ORDER BY "dept", "year";
+WHERE (("部门"=null OR "部门"='') AND  "部门"='C'
+GROUP BY "部门", "年份"
+ORDER BY "部门", "年份";
 </sql></args></api-call>
 
 """

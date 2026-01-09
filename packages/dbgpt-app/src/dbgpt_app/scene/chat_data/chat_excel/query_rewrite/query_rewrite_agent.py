@@ -512,7 +512,7 @@ class QueryRewriteAgent:
             history_context = "\n=== 历史对话上下文 ===\n"
             # 只保留最近3轮对话（6条消息），避免prompt过长
             recent_history = (
-                chat_history[-6:] if len(chat_history) > 6 else chat_history
+                chat_history[-12:] if len(chat_history) > 12 else chat_history
             )
 
             for msg in recent_history:

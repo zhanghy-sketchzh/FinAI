@@ -1507,12 +1507,12 @@ class ChatExcel(BaseChat):
             is_english = detected_language == "en"
             
             # 检查数据量是否过大（超过20条记录），如果过大则使用轻量级prompt
-            use_lightweight_summary = total_result_count > 20
+            use_lightweight_summary = total_result_count > 40
 
             history_context = ""
             if self.history_messages and len(self.history_messages) > 0:
                 history_context = "\n=== 历史对话 ===\n"
-                for msg in self.history_messages[-6:]:
+                for msg in self.history_messages[-12:]:
                     if not hasattr(msg, "content"):
                         continue
 
