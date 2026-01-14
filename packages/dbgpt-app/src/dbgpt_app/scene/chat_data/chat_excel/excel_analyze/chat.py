@@ -1750,8 +1750,8 @@ Please output a JSON object with the following structure:
 - **Constraints**:
   * Do NOT speculate, extrapolate, or provide subjective interpretations
 - **Output Requirements**:
-  * One sentence summary, no more than 100 words
-  * Must be in ENGLISH
+  * One objective and accurate summary
+  * Must be in **ENGLISH**
 
 **Requirements for suggested_questions**:
 - **First 6 questions**: Simple questions with clear standard answers 
@@ -1800,7 +1800,7 @@ Please output the JSON directly, without any other text:"""  # noqa: E501
 - **约束条件**：
   * 不要进行推测、延伸或主观解读
 - **输出要求**：
-  * 一句话总结，不超过100字
+  * 一段客观、准确的总结
   * 必须使用**中文**
 
 **推荐问题的要求**：

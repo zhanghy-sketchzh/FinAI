@@ -254,16 +254,29 @@ const ToolsBar: React.FC<{
   const FileNameDisplay = () => {
     if (fileResources.length === 0) return null;
 
-    const handlePreviewClick = (isExcelFile: boolean) => {
+    const handlePreviewClick = (isExcelFile: boolean, e?: React.MouseEvent) => {
       if (!isExcelFile) return;
       
+      // 阻止事件冒泡，避免被其他元素拦截
+      e?.stopPropagation();
+      e?.preventDefault();
+      
+      // 允许在执行过程中也能打开预览（不检查 replyLoading 状态）
+      // 如果有数据，切换显示状态；如果没有数据，也允许打开（可能数据还在加载中）
       if (excelPreviewData) {
         // 有数据，直接切换显示状态
         setExcelPreviewVisible?.(!excelPreviewVisible);
       } else {
-        // 没有数据，打开预览面板（会触发数据加载）
+        // 没有数据，也允许打开预览面板（数据可能正在加载中）
         setExcelPreviewVisible?.(true);
       }
+    };
+    
+    // 使用 capture 阶段捕获事件，确保即使有遮罩层也能触发
+    const handlePreviewClickCapture = (isExcelFile: boolean, e: React.MouseEvent) => {
+      if (!isExcelFile) return;
+      // 在 capture 阶段就处理，避免被遮罩层拦截
+      handlePreviewClick(isExcelFile, e);
     };
 
     return (
@@ -287,10 +300,18 @@ const ToolsBar: React.FC<{
             >
               <div
                 className={classNames(
-                  'flex items-center justify-between border border-[#e3e4e6] dark:border-[rgba(255,255,255,0.6)] rounded-lg p-2',
-                  { 'cursor-pointer hover:bg-gray-50 dark:hover:bg-gray-800 transition-colors': isExcelFile },
+                  'flex items-center justify-between border border-[#e3e4e6] dark:border-[rgba(255,255,255,0.6)] rounded-lg p-2 relative',
+                  { 
+                    'cursor-pointer hover:bg-gray-50 dark:hover:bg-gray-800 transition-colors': isExcelFile,
+                  },
                 )}
-                onClick={() => handlePreviewClick(isExcelFile)}
+                onClick={(e) => handlePreviewClick(isExcelFile, e)}
+                onClickCapture={(e) => handlePreviewClickCapture(isExcelFile, e)}
+                style={{ 
+                  zIndex: isExcelFile ? 9999 : 'auto', // 提高层级，确保可以点击（高于 Spin 遮罩层）
+                  pointerEvents: 'auto', // 确保可以点击
+                  position: isExcelFile ? 'relative' : 'static', // 确保 z-index 生效
+                }}
               >
                 <div className='flex items-center'>
                   <Image src={`/icons/chat/excel.png`} width={20} height={20} alt='file-icon' className='mr-2' />
