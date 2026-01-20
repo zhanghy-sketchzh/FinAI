@@ -71,6 +71,31 @@ class ExcelCacheManager:
                 access_count INTEGER DEFAULT 0
             )
         """)
+        
+        # 新增：多表元数据表（一个Excel文件可以有多个sheet/表）
+        cursor.execute("""
+            CREATE TABLE IF NOT EXISTS excel_tables_metadata (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                file_hash VARCHAR(64) NOT NULL,
+                sheet_name VARCHAR(255) NOT NULL,
+                table_hash VARCHAR(64) UNIQUE NOT NULL,
+                original_filename VARCHAR(255) NOT NULL,
+                table_name VARCHAR(255) NOT NULL,
+                db_name VARCHAR(255) NOT NULL,
+                db_path TEXT NOT NULL,
+                row_count INTEGER NOT NULL,
+                column_count INTEGER NOT NULL,
+                columns_info TEXT NOT NULL,
+                summary_prompt TEXT,
+                data_schema_json TEXT,
+                id_columns TEXT,
+                create_table_sql TEXT,
+                created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                last_accessed TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                access_count INTEGER DEFAULT 0,
+                UNIQUE(file_hash, sheet_name)
+            )
+        """)
 
         try:
             cursor.execute("SELECT data_schema_json FROM excel_metadata LIMIT 1")
@@ -84,6 +109,14 @@ class ExcelCacheManager:
         except sqlite3.OperationalError:
             cursor.execute(
                 "ALTER TABLE excel_metadata ADD COLUMN id_columns TEXT"
+            )
+        
+        # 为新表添加可能缺失的列
+        try:
+            cursor.execute("SELECT create_table_sql FROM excel_tables_metadata LIMIT 1")
+        except sqlite3.OperationalError:
+            cursor.execute(
+                "ALTER TABLE excel_tables_metadata ADD COLUMN create_table_sql TEXT"
             )
 
         conn.commit()
@@ -346,6 +379,163 @@ class ExcelCacheManager:
             )
 
         return result
+
+    def get_tables_by_file_hash(self, file_hash: str) -> List[Dict]:
+        """
+        根据文件哈希获取所有表的缓存信息（多表模式）
+        
+        Args:
+            file_hash: 文件哈希值
+            
+        Returns:
+            表信息列表
+        """
+        conn = sqlite3.connect(str(self.meta_db_path))
+        cursor = conn.cursor()
+        
+        cursor.execute(
+            """
+            SELECT 
+                file_hash, sheet_name, table_hash, original_filename, table_name,
+                db_name, db_path, row_count, column_count, columns_info,
+                summary_prompt, data_schema_json, id_columns, create_table_sql,
+                created_at, last_accessed, access_count
+            FROM excel_tables_metadata
+            WHERE file_hash = ?
+            ORDER BY id
+        """,
+            (file_hash,),
+        )
+        rows = cursor.fetchall()
+        
+        if rows:
+            # 更新访问时间和次数
+            cursor.execute(
+                """
+                UPDATE excel_tables_metadata
+                SET last_accessed = CURRENT_TIMESTAMP, access_count = access_count + 1
+                WHERE file_hash = ?
+            """,
+                (file_hash,),
+            )
+            conn.commit()
+        
+        conn.close()
+        
+        result = []
+        for row in rows:
+            result.append({
+                "file_hash": row[0],
+                "sheet_name": row[1],
+                "table_hash": row[2],
+                "original_filename": row[3],
+                "table_name": row[4],
+                "db_name": row[5],
+                "db_path": row[6],
+                "row_count": row[7],
+                "column_count": row[8],
+                "columns_info": json.loads(row[9]) if row[9] else [],
+                "summary_prompt": row[10],
+                "data_schema_json": row[11],
+                "id_columns": json.loads(row[12]) if row[12] else [],
+                "create_table_sql": row[13],
+                "created_at": row[14],
+                "last_accessed": row[15],
+                "access_count": row[16],
+            })
+        
+        return result
+
+    def save_table_cache_info(
+        self,
+        file_hash: str,
+        sheet_name: str,
+        table_hash: str,
+        original_filename: str,
+        table_name: str,
+        db_name: str,
+        db_path: str,
+        df: pd.DataFrame,
+        summary_prompt: str = None,
+        data_schema_json: str = None,
+        id_columns: List[str] = None,
+        create_table_sql: str = None,
+    ):
+        """
+        保存单个表的缓存信息（多表模式）
+        
+        Args:
+            file_hash: 文件哈希值
+            sheet_name: sheet名称
+            table_hash: 表哈希值（file_hash + sheet_name的组合哈希）
+            original_filename: 原始文件名
+            table_name: 表名
+            db_name: 数据库名
+            db_path: 数据库路径
+            df: DataFrame 对象
+            summary_prompt: 数据理解提示词
+            data_schema_json: 数据schema JSON
+            id_columns: ID列名列表
+            create_table_sql: 建表SQL语句
+        """
+        conn = sqlite3.connect(str(self.meta_db_path))
+        cursor = conn.cursor()
+
+        columns_info = [
+            {"name": col, "dtype": str(df[col].dtype)} for col in df.columns
+        ]
+
+        cursor.execute(
+            """
+            INSERT OR REPLACE INTO excel_tables_metadata
+            (file_hash, sheet_name, table_hash, original_filename, table_name, 
+             db_name, db_path, row_count, column_count, columns_info, 
+             summary_prompt, data_schema_json, id_columns, create_table_sql)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        """,
+            (
+                file_hash,
+                sheet_name,
+                table_hash,
+                original_filename,
+                table_name,
+                db_name,
+                db_path,
+                len(df),
+                len(df.columns),
+                json.dumps(columns_info, ensure_ascii=False),
+                summary_prompt,
+                data_schema_json,
+                json.dumps(id_columns if id_columns else [], ensure_ascii=False),
+                create_table_sql,
+            ),
+        )
+
+        conn.commit()
+        conn.close()
+
+    def delete_tables_by_file_hash(self, file_hash: str) -> int:
+        """
+        根据文件哈希删除所有相关表的缓存
+        
+        Args:
+            file_hash: 文件哈希值
+            
+        Returns:
+            删除的记录数
+        """
+        conn = sqlite3.connect(str(self.meta_db_path))
+        cursor = conn.cursor()
+
+        cursor.execute(
+            "DELETE FROM excel_tables_metadata WHERE file_hash = ?", (file_hash,)
+        )
+        deleted = cursor.rowcount
+
+        conn.commit()
+        conn.close()
+
+        return deleted
 
 
 class ExcelAutoRegisterService:
@@ -701,72 +891,118 @@ class ExcelAutoRegisterService:
             ModelRequestContext,
         )
 
-        # 构建表格文本表示（包含颜色信息）
-        table_text = "行号\t列1\t列2\t列3\t...\t颜色信息\n"
+        # 构建字典格式的数据表示（包含颜色信息）
+        rows_dict = []
         for idx, (row_data, row_colors) in enumerate(
             zip(rows_data[:20], rows_colors[:20])
         ):
             # 只显示前10列数据
-            row_values = [str(val) if val else "" for val in row_data[:10]]
+            row_dict = {
+                "row_index": idx,
+                "columns": {}
+            }
+            for col_idx, val in enumerate(row_data[:10]):
+                col_key = f"列{col_idx + 1}"
+                row_dict["columns"][col_key] = str(val) if val else ""
+            
             # 统计颜色分布
             color_counts = {}
             for color in row_colors:
                 if color:
                     color_counts[color] = color_counts.get(color, 0) + 1
-            color_info = (
+            row_dict["color_info"] = (
                 ", ".join(
                     [f"{color[:8]}({count}列)" for color, count in color_counts.items()]
                 )
                 if color_counts
                 else "无背景色"
             )
-            table_text += f"{idx}\t" + "\t".join(row_values) + f"\t[{color_info}]\n"
+            rows_dict.append(row_dict)
+        
+        rows_dict_str = json.dumps(rows_dict, ensure_ascii=False, indent=2)
 
         # 构建prompt
         prompt = f"""你是一个Excel数据分析专家。请分析以下Excel文件的前20行数据，判断哪些行是表头行（列名行）。
 
-注意：
-1. 表头行通常包含列名，如"ID"、"日期"、"名称"、"金额"等
-2. 可能有多级表头（多行表头），最后一行是最具体的列名
-3. 表头行通常有特殊的背景色，同一级的表头通常使用相同或相似的背景色
-4. 表头行之前可能有汇总信息行、说明行（如"请勿删除"、公式等），这些不是表头
-5. 表头行之后是数据行，数据行通常没有背景色或使用不同的背景色
-6. **如果发现中英文对照的标题行（如"Name"和"中英文名"），只保留中文标题行的索引，跳过英文标题行**
-7. **忽略包含"@@"、"="等公式标记的行，这些是Excel内部标记行**
-8. **优先选择包含中文列名的行作为表头，而不是英文列名的行**
+**核心判断原则**：
+表头行的本质特征是：它包含**字段名/列名**（描述数据的属性），而不是数据值本身。
 
-请仔细分析数据内容和颜色信息，返回JSON格式：
+**判断标准（按优先级排序）**：
+1. **语义判断（最重要）**：
+   - 如果一行包含的是**字段名/属性名**（如"本币"、"汇率"、"姓名"、"金额"等描述性文字），而后续行包含的是**具体数据值**（如"CNY"、"1"、"张三"、"100"等），则第一行很可能是表头
+   - 表头行通常：词语简短、具有描述性、表示数据的维度或属性
+   - 数据行通常：包含具体数值、代码、日期等实际数据
+
+2. **结构判断**：
+   - 如果第一行看起来像列名，后续行是数据，即使没有背景色，第一行也应该是表头
+   - 表头行通常在数据行之前
+   - 表头行的单元格内容通常是文本性质的描述性词语
+
+3. **可能有多级表头（多行表头）**，包括：
+   - 分类标签行（如"基本信息"、"订单信息"等分类标题，通常只有少数列有内容）
+   - 具体列名行（包含所有列的具体名称）
+   - 多级表头时，应该包含所有相关的表头行，从分类标签行到最具体的列名行
+
+4. **背景色（辅助判断，不是必要条件）**：
+   - 表头行可能有特殊的背景色，但**没有背景色的行也可能是表头**
+   - 不要因为缺少背景色就排除明显的列名行
+
+5. **排除规则**：
+   - 表头行之前可能有汇总信息行、说明行（如"请勿删除"、公式等），这些不是表头
+   - 忽略包含"@@"、"@"、"="等公式标记的行，这些是Excel内部标记行
+
+6. **中英文重复标题处理**：
+   - 如果发现中英文对照的标题行（如"Name"和"中英文名"），只保留中文标题行的索引，跳过英文标题行
+   - 优先选择包含中文列名的行作为表头
+
+
+**重要：请按以下步骤生成结果**：
+1. 首先在"reason"中**简要**说明你的判断理由（1-2句话即可），包括：
+   - 哪些行是表头行，为什么
+   - 如果有中英文重复标题或多级表头，简要说明处理方式
+2. 然后在"header_rows"中包含应该保留的表头行索引
+
+**注意**：reason 应该简洁明了，不要逐行分析，只需要说明最终选择的表头行及主要理由即可。
+
+返回JSON格式：
 {{
-  "reason": "判断理由，说明为什么选择这些行作为表头，以及如何识别和过滤重复的中英文标题行",
-  "header_rows": [行索引列表，从0开始],
+  "reason": "判断理由（必须详细说明选择的行和不选择的行，以及原因）",
+  "header_rows": [行索引列表，从0开始，必须与reason中说明的选择一致]
 }}
 
-示例1：
-如果第0行是"订单信息"（有蓝色背景），第1行是"行 ID, 订单 ID, 订单日期..."（有浅蓝色背景），第2行开始是数据（无背景色），则返回：
+示例1（单级表头 - 无背景色但明显是列名）：
+如果第0行是"本币, 本币转CNY汇率"（无背景色），第1行及之后是数据（如"CNY, 1"、"SGD, 5.4589"等，无背景色），则返回：
 {{
-  "header_rows": [0, 1],
-  "reason": "第0-1行有背景色且包含表头关键词，第0行是分类标签，第1行是具体列名。第2行开始无背景色且内容为数据值"
+  "reason": "第0行包含的是字段名'本币'和'本币转CNY汇率'，这些是描述性词语，表示数据的属性。第1行及之后包含的是具体数据值（如货币代码'CNY'、汇率数值'1'等）。从语义上看，第0行是列名（字段名），后续行是数据值，因此第0行是表头行。虽然都没有背景色，但基于语义判断，第0行明显是表头。",
+  "header_rows": [0]
 }}
 
-示例2：
-如果第0-2行是汇总信息（无背景色或不同背景色），第3行是表头（有背景色且包含ID、日期等关键词），则返回：
+示例2（多级表头）：
+如果第0行是"订单信息"（有蓝色背景，只有第一列有内容），第1行是"行 ID, 订单 ID, 订单日期..."（有浅蓝色背景，所有列都有列名），第2行开始是数据（无背景色），则返回：
 {{
-  "header_rows": [3],
-  "reason": "第3行有特殊背景色且包含ID、日期等典型表头关键词，前3行是汇总信息"
+  "reason": "第0行是分类标签'订单信息'，有蓝色背景且只有第一列有内容，属于表头的上层分类。第1行包含所有列的具体名称（行 ID, 订单 ID, 订单日期等），有浅蓝色背景，属于表头的具体列名行。这两行构成了多级表头结构，都应该保留。第2行开始无背景色且内容为数据值，不是表头。",
+  "header_rows": [0, 1]
 }}
 
-示例3（重复标题行）：
-如果第2行是"Onboarding_Date, Staff_ID, Department..."（英文标题），第3行是"入职日期, 员工ID, 部门..."（中文标题），这两行表示相同的列，则只返回：
+示例3（表头前有说明行）：
+如果第0-2行是汇总信息（无背景色或不同背景色），第3行是表头（有背景色且包含列名），则返回：
 {{
-  "header_rows": [3],
-  "reason": "第2行是英文标题，第3行是中文标题，它们表示相同的列。根据规则，只保留中文标题行（第3行），跳过英文标题行（第2行）"
+  "reason": "第0-2行无背景色或背景色与表头不同，且内容为汇总信息或说明文字（不是列名），不是表头。第3行有特殊背景色且包含列名（如ID、日期等），是唯一的表头行。",
+  "header_rows": [3]
 }}
 
-现在请分析以下数据（右侧显示了每行的颜色分布）：
+示例4（中英文重复标题行）：
+如果第9行是"基本信息(BasicInfo)"（分类标签，有背景色），第10行是"Name, LegalName, StaffID..."（英文标题，有背景色），第11行是"@Name"（公式标记行），第12行是"中英文名, 真实姓名, 员工ID..."（中文标题，有背景色），则返回：
+{{
+  "reason": "第9行是分类标签'基本信息(BasicInfo)'，有背景色，属于表头的分类层。第10行是英文列名，第12行是中文列名，这两行表示相同的列。根据规则，只保留中文标题行。第11行包含'@'公式标记，应忽略。因此表头行应为第9行（分类标签）和第12行（中文列名）。",
+  "header_rows": [9, 12]
+}}
 
-{table_text}
+现在请分析以下数据（每行包含行号、列数据和颜色分布信息）：
 
-请返回JSON格式的结果："""
+{rows_dict_str}
+
+请严格按照要求：先详细生成reason说明判断理由，然后基于reason生成header_rows，确保header_rows与reason完全一致。返回JSON格式的结果："""
 
         # 调用LLM（非流式）
         request_params = {
@@ -817,12 +1053,58 @@ class ExcelAutoRegisterService:
 
             if start_idx >= 0 and end_idx > start_idx:
                 json_str = full_text[start_idx:end_idx]
-                result = json.loads(json_str)
+                
+                # 清理控制字符（如换行符、制表符等）但不影响JSON结构
+                import re
+                
+                # 尝试直接解析
+                try:
+                    result = json.loads(json_str)
+                except json.JSONDecodeError as e:
+                    # 如果失败，尝试清理字符串值中的控制字符
+                    # JSON字符串中不允许有未转义的控制字符（U+0000到U+001F）
+                    # 我们替换字符串值中的控制字符为空格
+                    
+                    # 方法：逐字符处理，在字符串值中替换控制字符
+                    cleaned_chars = []
+                    in_string = False
+                    escape_next = False
+                    
+                    for i, char in enumerate(json_str):
+                        if escape_next:
+                            # 转义字符的下一个字符，直接保留
+                            cleaned_chars.append(char)
+                            escape_next = False
+                        elif char == '\\' and in_string:
+                            # 在字符串中的转义字符
+                            cleaned_chars.append(char)
+                            escape_next = True
+                        elif char == '"' and (i == 0 or json_str[i-1] != '\\'):
+                            # 字符串开始/结束（不是转义的引号）
+                            in_string = not in_string
+                            cleaned_chars.append(char)
+                        elif in_string and ord(char) < 32 and char not in '\n\r\t':
+                            # 在字符串中的未转义控制字符（除了\n\r\t），替换为空格
+                            cleaned_chars.append(' ')
+                        else:
+                            # 其他字符直接保留
+                            cleaned_chars.append(char)
+                    
+                    json_str_cleaned = ''.join(cleaned_chars)
+                    
+                    try:
+                        result = json.loads(json_str_cleaned)
+                    except json.JSONDecodeError:
+                        # 如果还是失败，记录错误并抛出原始异常
+                        logger.error(f"JSON解析失败（已尝试清理控制字符）: {e}")
+                        logger.error(f"JSON字符串前500字符: {json_str[:500]}")
+                        raise e
 
                 header_rows = result.get("header_rows", [])
                 reason = result.get("reason", "")
 
                 logger.info(f"LLM判断理由: {reason}")
+                logger.info(f"LLM返回的表头行: {header_rows}")
 
                 # 验证结果
                 if isinstance(header_rows, list) and all(
@@ -843,6 +1125,9 @@ class ExcelAutoRegisterService:
                 return None
         except json.JSONDecodeError as e:
             logger.warning(f"LLM输出JSON解析失败: {e}, 输出: {full_text[:200]}")
+            return None
+        except Exception as e:
+            logger.error(f"解析LLM结果时发生错误: {e}")
             return None
 
     def _merge_headers_by_color(self, color_info: Dict) -> List[str]:
@@ -1660,6 +1945,377 @@ class ExcelAutoRegisterService:
                 "error": str(e),
             }
 
+    def _generate_create_table_sql(self, db_path: str, table_name: str) -> str:
+        """
+        生成建表SQL语句
+        
+        Args:
+            db_path: 数据库路径
+            table_name: 表名
+            
+        Returns:
+            建表SQL语句
+        """
+        import duckdb
+        
+        try:
+            conn = duckdb.connect(db_path, read_only=True)
+            columns_result = conn.execute(f'DESCRIBE "{table_name}"').fetchall()
+            conn.close()
+            
+            columns_sql = []
+            for col in columns_result:
+                col_name = col[0]
+                col_type = col[1]
+                columns_sql.append(f'    "{col_name}" {col_type}')
+            
+            create_sql = f'CREATE TABLE "{table_name}" (\n' + ",\n".join(columns_sql) + "\n);"
+            return create_sql
+        except Exception as e:
+            logger.error(f"生成建表SQL失败: {e}")
+            return ""
+
+    def process_excel_multi_tables(
+        self,
+        excel_file_path: str,
+        force_reimport: bool = False,
+        original_filename: str = None,
+        conv_uid: str = None,
+        sheet_names: List[str] = None,
+        preview_limit: int = None,
+    ) -> Dict:
+        """处理Excel文件，将每个sheet存为独立的表（多表模式）
+
+        Args:
+            excel_file_path: Excel文件路径
+            force_reimport: 是否强制重新导入
+            original_filename: 原始文件名（可选）
+            conv_uid: 会话ID（可选）
+            sheet_names: 要处理的sheet名称列表，如果为None则处理所有sheet
+            preview_limit: 预览数据行数限制，None表示不限制
+            
+        Returns:
+            包含多表信息的字典，结构如下：
+            {
+                "status": "imported" | "cached",
+                "message": "...",
+                "file_hash": "文件哈希",
+                "db_name": "数据库名",
+                "db_path": "数据库路径",
+                "tables": [
+                    {
+                        "sheet_name": "sheet名称",
+                        "table_name": "表名",
+                        "table_hash": "表哈希",
+                        "row_count": 行数,
+                        "column_count": 列数,
+                        "columns_info": [...],
+                        "data_schema_json": "...",
+                        "create_table_sql": "建表SQL",
+                        ...
+                    },
+                    ...
+                ],
+                "conv_uid": "会话ID"
+            }
+        """
+        if original_filename is None:
+            original_filename = Path(excel_file_path).name
+
+        # 读取Excel获取sheet信息
+        file_ext = Path(excel_file_path).suffix.lower()
+        if file_ext == '.xls':
+            excel_file = pd.ExcelFile(excel_file_path, engine='xlrd')
+        else:
+            excel_file = pd.ExcelFile(excel_file_path)
+        all_sheet_names = excel_file.sheet_names
+
+        # 确定要处理的sheet
+        if sheet_names is None:
+            target_sheets = all_sheet_names
+        else:
+            target_sheets = []
+            for name in sheet_names:
+                if name in all_sheet_names:
+                    target_sheets.append(name)
+                else:
+                    logger.warning(f"Sheet '{name}' 不存在，跳过")
+
+            if not target_sheets:
+                raise ValueError(f"指定的sheet都不存在。可用的sheet: {all_sheet_names}")
+
+        # 计算文件级别的哈希
+        file_hash = self.cache_manager.calculate_file_hash(excel_file_path)
+        
+        # 去除 Excel 文件的筛选状态
+        excel_file_path = self._remove_excel_filters(excel_file_path)
+
+        # 检查缓存（多表模式）
+        if not force_reimport:
+            cached_tables = self.cache_manager.get_tables_by_file_hash(file_hash)
+            if cached_tables:
+                # 检查所有缓存的表是否都存在
+                first_table = cached_tables[0]
+                if os.path.exists(first_table["db_path"]):
+                    logger.info(f"多表缓存命中: {original_filename}, {len(cached_tables)}个表")
+                    
+                    # 获取每个表的预览数据
+                    for table_info in cached_tables:
+                        table_info["preview_data"] = self.get_table_preview_data(
+                            table_info["db_path"],
+                            table_info["table_name"],
+                            preview_limit,
+                            original_filename
+                        )
+                    
+                    return {
+                        "status": "cached",
+                        "message": f"使用缓存数据，共{len(cached_tables)}个表",
+                        "file_hash": file_hash,
+                        "db_name": first_table["db_name"],
+                        "db_path": first_table["db_path"],
+                        "tables": cached_tables,
+                        "conv_uid": conv_uid,
+                    }
+
+        # 没有缓存或强制重新导入
+        logger.info(f"处理Excel（多表模式）: {original_filename}, {len(target_sheets)}个sheet")
+
+        # 获取LLM客户端
+        if self.llm_client is None or self.model_name is None:
+            llm_client, model_name = self._get_llm_client_and_model()
+            if self.llm_client is None and llm_client is not None:
+                self.llm_client = llm_client
+            if self.model_name is None and model_name is not None:
+                self.model_name = model_name
+
+        # 创建数据库
+        db_name = f"excel_{file_hash[:8]}"
+        db_filename = f"{db_name}.duckdb"
+        db_path = str(self.db_storage_dir / db_filename)
+
+        import duckdb
+        
+        # 删除已存在的数据库文件（如果强制重新导入）
+        if force_reimport and os.path.exists(db_path):
+            os.remove(db_path)
+            # 同时删除缓存记录
+            self.cache_manager.delete_tables_by_file_hash(file_hash)
+
+        tables_info = []
+        tables_basic_info = []  # 存储每个表的基础信息（用于统一生成schema）
+        
+        # 第一阶段：处理所有sheet的数据，生成基础信息
+        logger.info(f"第一阶段：处理{len(target_sheets)}个sheet的数据")
+        for idx, sheet_name in enumerate(target_sheets):
+            logger.info(f"处理Sheet: {sheet_name}")
+            
+            try:
+                # 读取并处理sheet数据
+                df_raw = self._read_excel_file(
+                    excel_file_path, sheet_name=sheet_name, header=None
+                )
+                df = self._process_multi_level_header(df_raw, excel_file_path, sheet_name)
+                
+                # 生成表名
+                safe_sheet_name = "".join(
+                    c if c.isalnum() or c == "_" else "_" for c in sheet_name
+                )
+                if safe_sheet_name and safe_sheet_name[0].isdigit():
+                    safe_sheet_name = f"tbl_{safe_sheet_name}"
+                if not safe_sheet_name or len(safe_sheet_name) < 2:
+                    safe_sheet_name = f"sheet_{len(tables_info)}"
+                table_name = safe_sheet_name
+                
+                # 计算表哈希（file_hash + sheet_name）
+                table_hash = hashlib.sha256(
+                    f"{file_hash}_{sheet_name}".encode("utf-8")
+                ).hexdigest()
+                
+                # 数据清洗
+                df = self._remove_empty_columns(df)
+                df = self._remove_duplicate_columns(df)
+                df = self._format_date_columns(df)
+                
+                # 识别ID列
+                id_columns = []
+                try:
+                    id_columns = self._detect_id_columns_with_llm(df, table_name)
+                    if id_columns:
+                        logger.info(f"Sheet '{sheet_name}' ID列: {id_columns}")
+                except Exception as e:
+                    logger.warning(f"识别ID列失败: {e}")
+                
+                # 数据类型转换
+                df = self._convert_id_columns_to_string(df, id_columns)
+                df = self._convert_column_types(df, id_columns)
+                df = self._format_numeric_columns(df, id_columns)
+                
+                # 清理列名
+                df.columns = [
+                    str(col)
+                    .replace(" ", "")
+                    .replace("\u00a0", "")
+                    .replace("\n", "")
+                    .replace("\r", "")
+                    .replace("\t", "")
+                    for col in df.columns
+                ]
+                
+                # 去重列名
+                final_columns = []
+                seen_columns = {}
+                for col in df.columns:
+                    if col in seen_columns:
+                        seen_columns[col] += 1
+                        final_columns.append(f"{col}_{seen_columns[col]}")
+                    else:
+                        seen_columns[col] = 0
+                        final_columns.append(col)
+                df.columns = final_columns
+                
+                # 写入DuckDB
+                conn = duckdb.connect(db_path)
+                try:
+                    table_name_quoted = f'"{table_name}"'
+                    conn.execute(f"DROP TABLE IF EXISTS {table_name_quoted}")
+                    conn.register("temp_df", df)
+                    
+                    # 构建SELECT语句
+                    numeric_columns = [
+                        col for col in df.columns
+                        if df[col].dtype in ["int64", "float64", "int32", "float32", "Int64"]
+                        and col not in id_columns
+                    ]
+                    
+                    select_parts = []
+                    for col in df.columns:
+                        col_quoted = f'"{col}"'
+                        if col in id_columns:
+                            select_parts.append(f"CAST({col_quoted} AS VARCHAR) AS {col_quoted}")
+                        elif col in numeric_columns:
+                            select_parts.append(f"ROUND(CAST({col_quoted} AS DOUBLE), 2) AS {col_quoted}")
+                        else:
+                            select_parts.append(col_quoted)
+                    
+                    select_sql = ", ".join(select_parts)
+                    conn.execute(f"CREATE TABLE {table_name_quoted} AS SELECT {select_sql} FROM temp_df")
+                    conn.close()
+                    logger.info(f"表 '{table_name}' 保存完成: {len(df)}行")
+                except Exception as e:
+                    conn.close()
+                    logger.error(f"保存表 '{table_name}' 失败: {e}")
+                    raise
+                
+                # 生成建表SQL
+                create_table_sql = self._generate_create_table_sql(db_path, table_name)
+                
+                # 存储基础信息，稍后统一生成schema
+                tables_basic_info.append({
+                    "sheet_name": sheet_name,
+                    "table_name": table_name,
+                    "table_hash": table_hash,
+                    "df": df,
+                    "id_columns": id_columns,
+                    "create_table_sql": create_table_sql,
+                    "db_path": db_path,
+                })
+                
+            except Exception as e:
+                logger.error(f"处理Sheet '{sheet_name}' 失败: {e}")
+                # 继续处理其他sheet
+                continue
+
+        if not tables_basic_info:
+            raise ValueError("没有成功处理任何sheet")
+        
+        # 第二阶段：统一生成所有表的schema（table_description和推荐问题）
+        logger.info(f"第二阶段：统一生成{len(tables_basic_info)}个表的schema")
+        try:
+            all_schemas = self._generate_multi_table_schemas_with_llm(
+                tables_basic_info, original_filename
+            )
+        except Exception as e:
+            logger.warning(f"LLM统一生成schema失败，使用基础schema: {e}")
+            # 回退到单独生成
+            all_schemas = {}
+            for table_info in tables_basic_info:
+                table_name = table_info["table_name"]
+                df = table_info["df"]
+                id_columns = table_info["id_columns"]
+                all_schemas[table_name] = self._generate_basic_schema_json(df, table_name, id_columns)
+        
+        # 第三阶段：保存所有表的信息到缓存
+        logger.info(f"第三阶段：保存{len(tables_basic_info)}个表的信息到缓存")
+        for table_info in tables_basic_info:
+            sheet_name = table_info["sheet_name"]
+            table_name = table_info["table_name"]
+            table_hash = table_info["table_hash"]
+            df = table_info["df"]
+            id_columns = table_info["id_columns"]
+            create_table_sql = table_info["create_table_sql"]
+            db_path = table_info["db_path"]
+            
+            # 获取该表的schema
+            schema_json = all_schemas.get(table_name, self._generate_basic_schema_json(df, table_name, id_columns))
+            summary_prompt = self._format_schema_as_prompt(schema_json, df, table_name)
+            
+            # 获取列信息
+            conn = duckdb.connect(db_path, read_only=True)
+            columns_result = conn.execute(f'DESCRIBE "{table_name}"').fetchall()
+            columns_info = [
+                {"name": col[0], "type": col[1], "dtype": str(df[col[0]].dtype)}
+                for col in columns_result
+            ]
+            conn.close()
+            
+            # 保存到缓存
+            self.cache_manager.save_table_cache_info(
+                file_hash=file_hash,
+                sheet_name=sheet_name,
+                table_hash=table_hash,
+                original_filename=original_filename,
+                table_name=table_name,
+                db_name=db_name,
+                db_path=db_path,
+                df=df,
+                summary_prompt=summary_prompt,
+                data_schema_json=schema_json,
+                id_columns=id_columns,
+                create_table_sql=create_table_sql,
+            )
+            
+            # 获取预览数据
+            preview_data = self.get_table_preview_data(
+                db_path, table_name, preview_limit, original_filename
+            )
+            
+            tables_info.append({
+                "sheet_name": sheet_name,
+                "table_name": table_name,
+                "table_hash": table_hash,
+                "row_count": len(df),
+                "column_count": len(df.columns),
+                "columns_info": columns_info,
+                "summary_prompt": summary_prompt,
+                "data_schema_json": schema_json,
+                "id_columns": id_columns,
+                "create_table_sql": create_table_sql,
+                "preview_data": preview_data,
+            })
+
+        self._register_to_dbgpt(db_name, db_path, ",".join([t["table_name"] for t in tables_info]))
+
+        return {
+            "status": "imported",
+            "message": f"成功导入{len(tables_info)}个表",
+            "file_hash": file_hash,
+            "db_name": db_name,
+            "db_path": db_path,
+            "tables": tables_info,
+            "conv_uid": conv_uid,
+        }
+
     def process_excel(
         self,
         excel_file_path: str,
@@ -2040,12 +2696,95 @@ class ExcelAutoRegisterService:
         
         return json.dumps(schema, ensure_ascii=False, indent=2)
 
+    def _generate_multi_table_schemas_with_llm(
+        self, tables_basic_info: List[Dict], filename: str
+    ) -> Dict[str, str]:
+        """统一生成多个表的Schema理解JSON（一次LLM调用生成所有表的描述和推荐问题）
+        
+        Args:
+            tables_basic_info: 所有表的基础信息列表，每个元素包含：
+                - table_name: 表名
+                - df: DataFrame对象
+                - id_columns: ID列列表
+            filename: 文件名
+            
+        Returns:
+            字典，key为table_name，value为schema JSON字符串
+        """
+        # 构建所有表的基础信息
+        tables_info_for_prompt = []
+        for table_info in tables_basic_info:
+            table_name = table_info["table_name"]
+            df = table_info["df"]
+            
+            er_info = self._prepare_er_info(df, table_name)
+            numeric_stats = self._prepare_numeric_stats(df)
+            categorical_distribution = self._prepare_categorical_distribution(df)
+            sample_data = df.head(3).to_dict("records")
+            
+            tables_info_for_prompt.append({
+                "table_name": table_name,
+                "er_info": er_info,
+                "numeric_stats": numeric_stats,
+                "categorical_distribution": categorical_distribution,
+                "sample_data": sample_data,
+            })
+        
+        # 构建统一的prompt
+        prompt = self._build_multi_table_schema_prompt(tables_info_for_prompt, filename)
+        
+        # 调用LLM生成所有表的schema
+        llm_result = self._call_llm_for_schema(prompt)
+        
+        # 解析LLM返回的结果
+        try:
+            all_schemas_simplified = json.loads(llm_result)
+        except json.JSONDecodeError as e:
+            logger.error(f"解析多表schema JSON失败: {e}")
+            raise
+        
+        # 提取共享的推荐问题
+        shared_questions = {
+            "suggested_questions_zh": all_schemas_simplified.get("suggested_questions_zh", []),
+            "suggested_questions_en": all_schemas_simplified.get("suggested_questions_en", []),
+        }
+        
+        # 为每个表补充技术性字段
+        result = {}
+        for table_info in tables_basic_info:
+            table_name = table_info["table_name"]
+            df = table_info["df"]
+            id_columns = table_info["id_columns"]
+            
+            # 获取该表的简化schema
+            simplified_schema = all_schemas_simplified.get(table_name, {})
+            simplified_json = json.dumps(simplified_schema, ensure_ascii=False)
+            
+            # 补充技术性字段（传入共享的推荐问题）
+            enriched_json = self._enrich_schema_json(
+                simplified_json, df, table_name, id_columns, shared_questions=shared_questions
+            )
+            result[table_name] = enriched_json
+        
+        return result
+
     def _generate_schema_understanding_with_llm(
-        self, df: pd.DataFrame, table_name: str, id_columns: List[str] = None
+        self, df: pd.DataFrame, table_name: str, id_columns: List[str] = None, other_tables_info: List[Dict] = None
     ) -> str:
-        """使用LLM生成Schema理解JSON"""
+        """使用LLM生成Schema理解JSON（单表模式）
+        
+        Args:
+            df: DataFrame对象
+            table_name: 表名
+            id_columns: ID列列表
+            other_tables_info: 其他表的信息列表（多表模式下使用），每个元素包含：
+                - table_name: 表名
+                - table_description: 表描述（如果有）
+        """
         if id_columns is None:
             id_columns = []
+        if other_tables_info is None:
+            other_tables_info = []
         
         er_info = self._prepare_er_info(df, table_name)
         numeric_stats = self._prepare_numeric_stats(df)
@@ -2057,6 +2796,7 @@ class ExcelAutoRegisterService:
             numeric_stats=numeric_stats,
             categorical_distribution=categorical_distribution,
             sample_data=df.head(3).to_dict("records"),
+            other_tables_info=other_tables_info,
         )
         # 调用LLM生成简化的Schema JSON（只包含业务理解字段）
         simplified_json = self._call_llm_for_schema(prompt)
@@ -2135,6 +2875,117 @@ class ExcelAutoRegisterService:
 
         return "\n".join(dist_lines)
 
+    def _build_multi_table_schema_prompt(
+        self, tables_info: List[Dict], filename: str
+    ) -> str:
+        """构建多表统一生成schema的prompt
+        
+        Args:
+            tables_info: 所有表的信息列表
+            filename: 文件名
+        """
+        # 转换sample_data中的特殊类型为可JSON序列化的格式
+        def convert_to_serializable(obj):
+            if isinstance(obj, dict):
+                return {k: convert_to_serializable(v) for k, v in obj.items()}
+            elif isinstance(obj, list):
+                return [convert_to_serializable(item) for item in obj]
+            elif pd.isna(obj):
+                return None
+            elif hasattr(obj, "isoformat"):
+                return obj.isoformat()
+            elif isinstance(obj, (int, float, str, bool, type(None))):
+                return obj
+            else:
+                return str(obj)
+        
+        # 构建每个表的信息文本
+        tables_text = []
+        for idx, table_info in enumerate(tables_info, 1):
+            table_name = table_info["table_name"]
+            er_info = table_info["er_info"]
+            numeric_stats = table_info["numeric_stats"]
+            categorical_distribution = table_info["categorical_distribution"]
+            sample_data = convert_to_serializable(table_info["sample_data"])
+            sample_data_str = json.dumps(sample_data, ensure_ascii=False, indent=2)
+            
+            table_text = f"""
+=== 表{idx}: {table_name} ===
+
+{er_info}
+
+数值列描述统计:
+{numeric_stats}
+
+分类列唯一值分布:
+{categorical_distribution}
+
+样本数据（前3行）:
+{sample_data_str}
+"""
+            tables_text.append(table_text)
+        
+        all_tables_text = "\n".join(tables_text)
+        all_table_names = [t["table_name"] for t in tables_info]
+        all_table_names_str = "、".join(all_table_names)
+        
+        prompt = f"""你是一个数据分析专家。请分析Excel文件"{filename}"中的{len(tables_info)}个数据表，为每个表生成Schema理解的JSON。
+
+{all_tables_text}
+
+**任务要求**：
+1. 为每个表生成 `table_description`（表的整体描述，说明这是什么数据，适合做什么分析）
+2. 为整个Excel文件生成 `suggested_questions_zh` 和 `suggested_questions_en`（9个推荐问题）
+
+**推荐问题要求**：
+- 前6个问题：简单的问题，有明确的标准答案
+- 后3个问题：中等难度问题，需要一定的思考和分析
+- **重要**：所有问题必须基于数据表中的实际字段和数据，不能凭空捏造
+- **多表场景特别要求**：必须在问题中明确指出要使用哪个表或哪些表，避免"有哪些人"、"谁的奖金最高"这种模糊表达
+  * 好的示例："{all_table_names[0]}中有哪些人"、"所有表中谁的奖金最高"、"{all_table_names[0]}和{all_table_names[1] if len(all_table_names) > 1 else all_table_names[0]}的数据对比"
+  * 不好的示例："有哪些人"、"谁的奖金最高"
+- 推荐问题应该覆盖不同的表，引导用户探索各个表的数据
+
+请严格按照以下JSON格式输出（注意：推荐问题是整个Excel文件共享的，不是每个表单独的）：
+
+```json
+{{
+  "{all_table_names[0]}": {{
+    "table_description": "表的整体描述...",
+  }},
+  "{all_table_names[1] if len(all_table_names) > 1 else 'table2'}": {{
+    "table_description": "表的整体描述...",
+  }},
+  ...
+  "suggested_questions_zh": [
+    "问题1（简单问题，明确指出使用哪个表）",
+    "问题2（简单问题，明确指出使用哪个表）",
+    "问题3（简单问题，明确指出使用哪个表）",
+    "问题4（简单问题，明确指出使用哪个表）",
+    "问题5（简单问题，明确指出使用哪个表）",
+    "问题6（简单问题，明确指出使用哪个表）",
+    "问题7（中等难度问题）",
+    "问题8（中等难度问题）",
+    "问题9（中等难度问题）"
+  ],
+  "suggested_questions_en": [
+    "Question 1 (simple question, specify which table to use)",
+    "Question 2 (simple question, specify which table to use)",
+    "Question 3 (simple question, specify which table to use)",
+    "Question 4 (simple question, specify which table to use)",
+    "Question 5 (simple question, specify which table to use)",
+    "Question 6 (simple question, specify which table to use)",
+    "Question 7 (medium difficulty question)",
+    "Question 8 (medium difficulty question)",
+    "Question 9 (medium difficulty question)"
+  ]
+}}
+```
+
+请直接输出JSON，不要有其他文字："""
+        
+        return prompt
+
     def _build_schema_understanding_prompt(
         self,
         table_name: str,
@@ -2142,8 +2993,20 @@ class ExcelAutoRegisterService:
         numeric_stats: str,
         categorical_distribution: str,
         sample_data: list,
+        other_tables_info: List[Dict] = None,
     ) -> str:
-        """构建Schema理解Prompt（简化版，只生成必要的业务理解字段）"""
+        """构建Schema理解Prompt（简化版，只生成必要的业务理解字段）
+
+        Args:
+            table_name: 当前表名
+            er_info: ER信息
+            numeric_stats: 数值统计
+            categorical_distribution: 分类分布
+            sample_data: 样本数据
+            other_tables_info: 其他表的信息列表（多表模式下使用），每个元素包含：
+                - table_name: 表名
+                - table_description: 表描述（如果有）
+        """
 
         # 转换sample_data中的特殊类型（如Timestamp）为可JSON序列化的格式
         def convert_to_serializable(obj):
@@ -2166,6 +3029,39 @@ class ExcelAutoRegisterService:
             serializable_sample_data, ensure_ascii=False, indent=2
         )
 
+        # 构建多表场景的提示信息
+        multi_table_guidance = ""
+        if other_tables_info and len(other_tables_info) > 0:
+            other_tables_names = [t.get("table_name", "") for t in other_tables_info]
+            other_tables_str = "、".join(other_tables_names)
+            other_tables_str_en = ", ".join(other_tables_names)
+            example_other_table = other_tables_names[0] if other_tables_names else "其他表"
+            multi_table_guidance = f"""
+
+**重要提示 - 多表场景 / IMPORTANT - Multi-Table Scenario**：
+当前Excel文件中包含多个数据表，除了当前表"{table_name}"外，还有以下表：{other_tables_str}。
+This Excel file contains multiple data tables. Besides the current table "{table_name}", there are also the following tables: {other_tables_str_en}.
+
+**推荐问题的特殊要求 / Special Requirements for Recommended Questions**：
+1. **必须在问题中明确指出要使用哪个表或哪些表，避免模糊表达**
+   **Questions must explicitly specify which table(s) to use, avoid vague expressions**
+2. **推荐问题的示例格式 / Example Question Formats**：
+   - ✅ 好的示例（明确指出表）/ Good Examples (explicitly specify tables)：
+     * 中文: "查询{table_name}中有哪些人"、"查询{example_other_table}中有哪些人"、"所有员工中有哪些人"、"{table_name}中谁的奖金最高"
+     * English: "Who are in {table_name}", "Who are in {example_other_table}", "Who are all employees", "Who has the highest bonus in {table_name}"
+   - ❌ 不好的示例（没有明确指出表）/ Bad Examples (no table specified)：
+     * 中文: "有哪些人"、"谁的奖金最高"、"数据有多少条"
+     * English: "Who are there", "Who has the highest bonus", "How many records"
+
+3. **推荐问题的分配建议 / Question Distribution Suggestions**：
+   - 可以包含几个只针对当前表"{table_name}"的问题（明确提到表名）
+   - Can include a few questions specific to the current table "{table_name}" (explicitly mention table name)
+   - 可以包含几个针对其他表的问题（明确提到其他表名）
+   - Can include a few questions for other tables (explicitly mention other table names)
+   - 可以包含几个涉及"所有"或"全部"表的问题（使用"所有"、"全部"、"总共"等词 / 英文使用"all", "total", "overall"等词）
+   - Can include a few questions involving "all" or "total" tables (use words like "所有", "全部", "总共" in Chinese / "all", "total", "overall" in English)
+"""
+
         prompt = f"""你是一个数据分析专家，请分析以下数据表的结构和语义，生成Schema理解的JSON。
 
 === 数据表ER信息 ===
@@ -2176,7 +3072,7 @@ class ExcelAutoRegisterService:
 
 === 分类列唯一值分布 ===
 {categorical_distribution}
-
+{multi_table_guidance}
 
 请生成一个简化的JSON格式，包含以下信息：
 
@@ -2188,6 +3084,7 @@ class ExcelAutoRegisterService:
      * 前6个问题：简单的问题，有明确的标准答案
      * 后3个问题：中等难度问题，需要一定的思考和分析
      * **重要**：所有问题必须基于数据表中的实际字段和数据，不能凭空捏造不存在的字段或数据
+     * **多表场景特别要求**：必须在问题中明确指出要使用哪个表或哪些表，避免"有哪些人"、"谁的奖金最高"这种模糊表达，应该写成"{{表名}}中有哪些人"、"{{表名}}中谁的奖金最高"或"所有员工中有哪些人"等明确形式
 
 请严格按照以下JSON格式输出：
 
@@ -2225,6 +3122,7 @@ class ExcelAutoRegisterService:
 5. **所有问题必须基于数据表中的实际字段和数据，可以围绕具体的分类值进行分析，不能凭空捏造不存在的字段或数据**
 6. 中文推荐问题应该用自然的中文表达，英文推荐问题应该用自然的英文表达，简洁明了，可以直接用于数据分析
 7. 中英文问题应该一一对应，内容相同但语言不同
+8. **如果是多表场景，必须在问题中明确指出要使用哪个表或哪些表**，使用表名或"所有"、"全部"等明确表达，避免模糊的问题
 
 请直接输出JSON，不要有其他文字：
 """
@@ -2249,9 +3147,19 @@ class ExcelAutoRegisterService:
 
     def _enrich_schema_json(
         self, simplified_json: str, df: pd.DataFrame, table_name: str, 
-        pre_detected_id_columns: List[str] = None
+        pre_detected_id_columns: List[str] = None, shared_questions: Dict = None
     ) -> str:
-        """通过代码补充技术性字段，生成完整的Schema JSON"""
+        """通过代码补充技术性字段，生成完整的Schema JSON
+        
+        Args:
+            simplified_json: LLM生成的简化schema JSON
+            df: DataFrame对象
+            table_name: 表名
+            pre_detected_id_columns: 预先检测的ID列
+            shared_questions: 共享的推荐问题（多表模式下使用），包含：
+                - suggested_questions_zh: 中文推荐问题列表
+                - suggested_questions_en: 英文推荐问题列表
+        """
         if pre_detected_id_columns is None:
             pre_detected_id_columns = []
         
@@ -2314,13 +3222,19 @@ class ExcelAutoRegisterService:
 
             enriched_columns.append(col_info)
 
-        # 从LLM返回的schema中提取推荐问题，支持中英两个版本
-        suggested_questions_zh = schema.get("suggested_questions_zh", [])
-        suggested_questions_en = schema.get("suggested_questions_en", [])
-        
-        # 兼容旧格式：如果只有 suggested_questions，则作为中文版本
-        if not suggested_questions_zh and schema.get("suggested_questions"):
-            suggested_questions_zh = schema.get("suggested_questions", [])
+        # 从LLM返回的schema或共享问题中提取推荐问题
+        if shared_questions:
+            # 多表模式：使用共享的推荐问题
+            suggested_questions_zh = shared_questions.get("suggested_questions_zh", [])
+            suggested_questions_en = shared_questions.get("suggested_questions_en", [])
+        else:
+            # 单表模式：从schema中提取推荐问题
+            suggested_questions_zh = schema.get("suggested_questions_zh", [])
+            suggested_questions_en = schema.get("suggested_questions_en", [])
+            
+            # 兼容旧格式：如果只有 suggested_questions，则作为中文版本
+            if not suggested_questions_zh and schema.get("suggested_questions"):
+                suggested_questions_zh = schema.get("suggested_questions", [])
         
         # 如果中文版本没有或数量不足，使用备用方法生成
         if not suggested_questions_zh or len(suggested_questions_zh) < 9:
@@ -2840,3 +3754,129 @@ class ExcelAutoRegisterService:
             Excel 信息字典
         """
         return self.cache_manager.get_cached_info(content_hash)
+
+    def get_tables_info_for_selection(self, file_hash: str) -> List[Dict]:
+        """
+        获取多表信息用于表选择
+        
+        Args:
+            file_hash: 文件哈希值
+            
+        Returns:
+            表信息列表，每个元素包含表选择所需的信息
+        """
+        tables = self.cache_manager.get_tables_by_file_hash(file_hash)
+        
+        result = []
+        for table in tables:
+            result.append({
+                "table_name": table.get("table_name"),
+                "sheet_name": table.get("sheet_name"),
+                "table_hash": table.get("table_hash"),
+                "create_table_sql": table.get("create_table_sql"),
+                "data_schema_json": table.get("data_schema_json"),
+                "row_count": table.get("row_count"),
+                "column_count": table.get("column_count"),
+                "db_path": table.get("db_path"),
+            })
+        
+        return result
+
+    def get_table_schema_by_name(
+        self, file_hash: str, table_name: str
+    ) -> Optional[Dict]:
+        """
+        根据文件哈希和表名获取单个表的完整信息
+        
+        Args:
+            file_hash: 文件哈希值
+            table_name: 表名
+            
+        Returns:
+            表的完整信息字典
+        """
+        tables = self.cache_manager.get_tables_by_file_hash(file_hash)
+        
+        for table in tables:
+            if table.get("table_name") == table_name:
+                return table
+        
+        return None
+
+    def get_combined_schema_for_tables(
+        self, file_hash: str, table_names: List[str]
+    ) -> Dict:
+        """
+        获取多个表的组合Schema信息，用于query改写
+        
+        Args:
+            file_hash: 文件哈希值
+            table_names: 要组合的表名列表
+            
+        Returns:
+            组合后的Schema信息
+        """
+        tables = self.cache_manager.get_tables_by_file_hash(file_hash)
+        
+        selected_tables = []
+        for table in tables:
+            if table.get("table_name") in table_names:
+                selected_tables.append(table)
+        
+        if not selected_tables:
+            return {}
+        
+        # 如果只有一个表，直接返回其schema
+        if len(selected_tables) == 1:
+            table = selected_tables[0]
+            return {
+                "table_name": table.get("table_name"),
+                "data_schema_json": table.get("data_schema_json"),
+                "create_table_sql": table.get("create_table_sql"),
+                "summary_prompt": table.get("summary_prompt"),
+                "db_path": table.get("db_path"),
+            }
+        
+        # 多个表的情况，组合schema
+        combined_columns = []
+        table_descriptions = []
+        create_sqls = []
+        
+        for table in selected_tables:
+            table_name = table.get("table_name")
+            schema_json = table.get("data_schema_json")
+            
+            if schema_json:
+                try:
+                    schema = json.loads(schema_json) if isinstance(schema_json, str) else schema_json
+                    
+                    # 为每个列添加表名前缀
+                    for col in schema.get("columns", []):
+                        col_copy = col.copy()
+                        col_copy["table_name"] = table_name
+                        col_copy["full_column_name"] = f"{table_name}.{col.get('column_name', '')}"
+                        combined_columns.append(col_copy)
+                    
+                    if schema.get("table_description"):
+                        table_descriptions.append(f"【{table_name}】: {schema['table_description']}")
+                except Exception as e:
+                    logger.warning(f"解析表 {table_name} 的schema失败: {e}")
+            
+            if table.get("create_table_sql"):
+                create_sqls.append(table.get("create_table_sql"))
+        
+        combined_schema = {
+            "tables": [t.get("table_name") for t in selected_tables],
+            "table_descriptions": "\n".join(table_descriptions),
+            "columns": combined_columns,
+            "create_table_sqls": "\n\n".join(create_sqls),
+        }
+        
+        return {
+            "is_multi_table": True,
+            "table_names": [t.get("table_name") for t in selected_tables],
+            "data_schema_json": json.dumps(combined_schema, ensure_ascii=False),
+            "create_table_sql": "\n\n".join(create_sqls),
+            "summary_prompt": "\n".join(table_descriptions),
+            "db_path": selected_tables[0].get("db_path"),  # 所有表在同一个数据库
+        }

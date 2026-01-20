@@ -340,6 +340,7 @@ async def file_upload(
     max_new_tokens: Optional[int] = None,
     sys_code: Optional[str] = None,
     model_name: Optional[str] = None,
+    multi_table_mode: Optional[bool] = None,  # 多表模式：每个sheet存为独立的表
     doc_files: List[UploadFile] = File(...),
     user_token: UserRequest = Depends(get_user_from_headers),
     fs: FileStorageClient = Depends(get_fs),
@@ -446,7 +447,7 @@ async def file_upload(
                         system_app=CFG.SYSTEM_APP,
                     )
 
-                    # 检测Excel文件中的sheet数量，如果有多个sheet则自动启用合并模式
+                    # 检测Excel文件中的sheet数量
                     import pandas as pd
 
                     try:
@@ -456,90 +457,153 @@ async def file_upload(
                         logger.info(
                             f"Excel文件包含 {sheet_count} 个sheet: {sheet_names}"
                         )
-
-                        # 如果有多个sheet，自动启用合并模式
-                        merge_sheets = sheet_count > 1
-                        if merge_sheets:
-                            logger.info("检测到多个sheet，自动启用合并模式")
                     except Exception as e:
                         logger.warning(f"无法读取Excel sheet信息: {e}，将使用默认设置")
-                        merge_sheets = False
+                        sheet_count = 1
                         sheet_names = None
 
-                    register_result = await blocking_func_to_async(
-                        CFG.SYSTEM_APP,
-                        excel_service.process_excel,
-                        local_file_path,
-                        None,  # 自动生成表名
-                        False,  # 使用缓存
-                        original_filename,  # 传递原始文件名
-                        conv_uid,  # 传递会话ID
-                        sheet_names,  # 传递sheet名称列表（None表示所有sheet）
-                        merge_sheets,  # 是否合并多个sheet
-                        "数据类型",  # 来源列名
-                    )
-
-                    # 将注册结果添加到 file_param 中
-                    file_param["excel_registered"] = True
-                    file_param["db_name"] = register_result["db_name"]
-                    file_param["db_path"] = register_result.get(
-                        "db_path"
-                    )  # 添加SQLite数据库路径
-                    file_param["table_name"] = register_result["table_name"]
-                    file_param["content_hash"] = register_result["content_hash"]
-                    file_param["register_status"] = register_result["status"]
-                    file_param["summary_prompt"] = register_result.get("summary_prompt")
-                    file_param["data_schema_json"] = register_result.get(
-                        "data_schema_json"
-                    )
-                    file_param["row_count"] = register_result.get("row_count")
-                    file_param["column_count"] = register_result.get("column_count")
-                    file_param["top_10_rows"] = register_result.get("top_10_rows")
-                    file_param["preview_data"] = register_result.get("preview_data")
-                    file_param["suggested_questions"] = register_result.get(
-                        "suggested_questions"
-                    )
-
-                    # 存储到 excel_schema 表
-                    try:
-                        from dbgpt_app.scene.chat_data.chat_excel.excel_schema_db import (  # noqa: E501
-                            ExcelSchemaDao,
+                    # 判断是否使用多表模式
+                    # 如果明确指定了 multi_table_mode，则使用指定的值
+                    # 否则，如果有多个sheet，默认使用多表模式
+                    use_multi_table_mode = multi_table_mode if multi_table_mode is not None else (sheet_count > 1)
+                    
+                    if use_multi_table_mode and sheet_count > 1:
+                        # 多表模式：每个sheet存为独立的表
+                        logger.info("使用多表模式，每个sheet将存为独立的表")
+                        register_result = await blocking_func_to_async(
+                            CFG.SYSTEM_APP,
+                            excel_service.process_excel_multi_tables,
+                            local_file_path,
+                            False,  # 使用缓存
+                            original_filename,  # 传递原始文件名
+                            conv_uid,  # 传递会话ID
                         )
-
-                        excel_schema_dao = ExcelSchemaDao()
-                        excel_schema_dao.save_or_update(
-                            conv_uid=conv_uid,
-                            file_name=original_filename,
-                            table_name=register_result["table_name"],
-                            row_count=register_result["row_count"],
-                            column_count=register_result["column_count"],
-                            top_10_rows=register_result.get("top_10_rows", []),
-                            data_description=register_result.get("summary_prompt"),
-                            data_schema_json=register_result.get("data_schema_json"),
-                            suggested_questions=register_result.get(
-                                "suggested_questions"
-                            ),
-                            file_path=file_param["file_path"],
-                            db_path=register_result.get("db_path"),
-                            user_id=user_token.user_id,
-                            sys_code=sys_code,
-                        )
+                        
+                        # 多表模式的结果处理
+                        file_param["multi_table_mode"] = True
+                        file_param["excel_registered"] = True
+                        file_param["db_name"] = register_result["db_name"]
+                        file_param["db_path"] = register_result.get("db_path")
+                        file_param["file_hash"] = register_result.get("file_hash")
+                        file_param["tables"] = register_result.get("tables", [])
+                        file_param["content_hash"] = register_result.get("file_hash")
+                        file_param["register_status"] = register_result["status"]
+                        
+                        # 构建多表预览数据
+                        tables = register_result.get("tables", [])
+                        file_param["preview_data"] = {
+                            "file_name": original_filename,
+                            "tables": [
+                                {
+                                    "sheet_name": t.get("sheet_name", ""),
+                                    "table_name": t.get("table_name", ""),
+                                    "columns": t.get("preview_data", {}).get("columns", []),
+                                    "rows": t.get("preview_data", {}).get("rows", []),
+                                    "total": t.get("row_count", 0),
+                                    "file_name": original_filename,
+                                }
+                                for t in tables
+                            ]
+                        }
+                        
+                        # 汇总信息
+                        total_rows = sum(t.get("row_count", 0) for t in tables)
+                        total_cols = max((t.get("column_count", 0) for t in tables), default=0)
+                        file_param["row_count"] = total_rows
+                        file_param["column_count"] = total_cols
+                        file_param["table_name"] = ", ".join(t.get("table_name", "") for t in tables)
+                        
+                        # 合并所有表的 summary_prompt
+                        summary_prompts = [t.get("summary_prompt", "") for t in tables if t.get("summary_prompt")]
+                        file_param["summary_prompt"] = "\n\n".join(summary_prompts) if summary_prompts else None
+                        
                         logger.info(
-                            f"✅ Excel schema saved to database for conv_uid={conv_uid}"
+                            f"✅ Excel multi-table registered: {original_filename} -> "
+                            f"db={register_result['db_name']}, "
+                            f"tables={len(tables)}, "
+                            f"status={register_result['status']}"
                         )
-                    except Exception as e:
-                        logger.error(f"❌ Failed to save Excel schema to database: {e}")
-                        import traceback
+                    else:
+                        # 单表模式或合并模式
+                        merge_sheets = sheet_count > 1 and not use_multi_table_mode
+                        if merge_sheets:
+                            logger.info("检测到多个sheet，使用合并模式")
+                        
+                        register_result = await blocking_func_to_async(
+                            CFG.SYSTEM_APP,
+                            excel_service.process_excel,
+                            local_file_path,
+                            None,  # 自动生成表名
+                            False,  # 使用缓存
+                            original_filename,  # 传递原始文件名
+                            conv_uid,  # 传递会话ID
+                            sheet_names,  # 传递sheet名称列表（None表示所有sheet）
+                            merge_sheets,  # 是否合并多个sheet
+                            "数据类型",  # 来源列名
+                        )
 
-                        logger.error(traceback.format_exc())
+                        # 将注册结果添加到 file_param 中（单表模式）
+                        file_param["multi_table_mode"] = False
+                        file_param["excel_registered"] = True
+                        file_param["db_name"] = register_result["db_name"]
+                        file_param["db_path"] = register_result.get(
+                            "db_path"
+                        )  # 添加SQLite数据库路径
+                        file_param["table_name"] = register_result["table_name"]
+                        file_param["content_hash"] = register_result["content_hash"]
+                        file_param["register_status"] = register_result["status"]
+                        file_param["summary_prompt"] = register_result.get("summary_prompt")
+                        file_param["data_schema_json"] = register_result.get(
+                            "data_schema_json"
+                        )
+                        file_param["row_count"] = register_result.get("row_count")
+                        file_param["column_count"] = register_result.get("column_count")
+                        file_param["top_10_rows"] = register_result.get("top_10_rows")
+                        file_param["preview_data"] = register_result.get("preview_data")
+                        file_param["suggested_questions"] = register_result.get(
+                            "suggested_questions"
+                        )
 
-                    logger.info(
-                        f"✅ Excel auto-registered: {file_param['file_name']} -> "
-                        f"db={register_result['db_name']}, "
-                        f"table={register_result['table_name']}, "
-                        f"status={register_result['status']}, "
-                        f"rows={register_result['row_count']}"
-                    )
+                        # 存储到 excel_schema 表
+                        try:
+                            from dbgpt_app.scene.chat_data.chat_excel.excel_schema_db import (  # noqa: E501
+                                ExcelSchemaDao,
+                            )
+
+                            excel_schema_dao = ExcelSchemaDao()
+                            excel_schema_dao.save_or_update(
+                                conv_uid=conv_uid,
+                                file_name=original_filename,
+                                table_name=register_result["table_name"],
+                                row_count=register_result["row_count"],
+                                column_count=register_result["column_count"],
+                                top_10_rows=register_result.get("top_10_rows", []),
+                                data_description=register_result.get("summary_prompt"),
+                                data_schema_json=register_result.get("data_schema_json"),
+                                suggested_questions=register_result.get(
+                                    "suggested_questions"
+                                ),
+                                file_path=file_param["file_path"],
+                                db_path=register_result.get("db_path"),
+                                user_id=user_token.user_id,
+                                sys_code=sys_code,
+                            )
+                            logger.info(
+                                f"✅ Excel schema saved to database for conv_uid={conv_uid}"
+                            )
+                        except Exception as e:
+                            logger.error(f"❌ Failed to save Excel schema to database: {e}")
+                            import traceback
+
+                            logger.error(traceback.format_exc())
+
+                        logger.info(
+                            f"✅ Excel auto-registered: {file_param['file_name']} -> "
+                            f"db={register_result['db_name']}, "
+                            f"table={register_result['table_name']}, "
+                            f"status={register_result['status']}, "
+                            f"rows={register_result['row_count']}"
+                        )
                 except Exception as e:
                     logger.error(f"❌ Failed to auto-register Excel to datasource: {e}")
                     import traceback

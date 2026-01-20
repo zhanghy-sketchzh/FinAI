@@ -1,18 +1,34 @@
 import { CloseOutlined, FilterOutlined, SearchOutlined, TableOutlined } from '@ant-design/icons';
-import { Button, Input, Popover, Spin, Table, Tag, Tooltip } from 'antd';
+import { Button, Input, Popover, Spin, Table, Tabs, Tag, Tooltip } from 'antd';
 import type { ColumnsType } from 'antd/es/table';
 import type { ColumnType, FilterValue, SorterResult } from 'antd/es/table/interface';
 import { useMemo, useRef, useState } from 'react';
 import { useTranslation } from 'react-i18next';
 
+// 单个表的预览数据
+interface SingleTablePreviewData {
+  columns: Array<{ field: string; type: string; headerName: string }>;
+  rows: Array<Record<string, any>>;
+  total: number;
+  file_name?: string;
+  sheet_name?: string;
+  table_name?: string;
+}
+
+// 多表预览数据（新增）
+interface MultiTablePreviewData {
+  file_name?: string;
+  tables: Array<SingleTablePreviewData & { sheet_name: string; table_name: string }>;
+}
+
 interface ExcelDataTableProps {
-  previewData?: {
-    columns: Array<{ field: string; type: string; headerName: string }>;
-    rows: Array<Record<string, any>>;
-    total: number;
-    file_name?: string;
-  };
+  previewData?: SingleTablePreviewData | MultiTablePreviewData;
   onDelete?: () => void;
+}
+
+// 类型守卫：判断是否为多表数据
+function isMultiTableData(data: SingleTablePreviewData | MultiTablePreviewData): data is MultiTablePreviewData {
+  return 'tables' in data && Array.isArray(data.tables);
 }
 
 const ExcelDataTable: React.FC<ExcelDataTableProps> = ({ previewData, onDelete }) => {
@@ -20,7 +36,31 @@ const ExcelDataTable: React.FC<ExcelDataTableProps> = ({ previewData, onDelete }
   const [searchText, setSearchText] = useState<Record<string, string>>({});
   const [sortedInfo, setSortedInfo] = useState<SorterResult<Record<string, any>>>({});
   const [filterVisible, setFilterVisible] = useState<Record<string, boolean>>({});
+  const [activeTabKey, setActiveTabKey] = useState<string>('0');
   const searchInputRef = useRef<any>(null);
+
+  // 判断是否为多表数据
+  const isMultiTable = previewData && isMultiTableData(previewData);
+
+  // 获取当前显示的表数据
+  const currentTableData: SingleTablePreviewData | undefined = useMemo(() => {
+    if (!previewData) return undefined;
+
+    if (isMultiTableData(previewData)) {
+      const tabIndex = parseInt(activeTabKey, 10);
+      return previewData.tables[tabIndex];
+    }
+
+    return previewData as SingleTablePreviewData;
+  }, [previewData, activeTabKey]);
+
+  // 切换tab时重置筛选和排序状态
+  const handleTabChange = (key: string) => {
+    setActiveTabKey(key);
+    setSearchText({});
+    setSortedInfo({});
+    setFilterVisible({});
+  };
 
   // 格式化数字为千分位
   const formatNumber = (value: any): string => {
@@ -40,8 +80,8 @@ const ExcelDataTable: React.FC<ExcelDataTableProps> = ({ previewData, onDelete }
 
   // 过滤后的数据
   const filteredData = useMemo(() => {
-    if (!previewData?.rows) return [];
-    return previewData.rows.filter(row => {
+    if (!currentTableData?.rows) return [];
+    return currentTableData.rows.filter(row => {
       return Object.entries(searchText).every(([key, value]) => {
         if (!value) return true;
         const cellValue = row[key];
@@ -50,14 +90,14 @@ const ExcelDataTable: React.FC<ExcelDataTableProps> = ({ previewData, onDelete }
           .includes(value.toLowerCase());
       });
     });
-  }, [previewData?.rows, searchText]);
+  }, [currentTableData?.rows, searchText]);
 
   // 活跃筛选数量
   const activeFilterCount = useMemo(() => {
     return Object.values(searchText).filter(v => v && v.trim()).length;
   }, [searchText]);
 
-  if (!previewData || !previewData.columns || previewData.columns.length === 0) {
+  if (!previewData || !currentTableData || !currentTableData.columns || currentTableData.columns.length === 0) {
     return (
       <div className='flex flex-col items-center justify-center h-full gap-4 bg-[#ffffff80] dark:bg-[#ffffff29]'>
         <div className='relative'>
@@ -94,7 +134,7 @@ const ExcelDataTable: React.FC<ExcelDataTableProps> = ({ previewData, onDelete }
   };
 
   // 转换列定义
-  const columns: ColumnsType<Record<string, any>> = previewData.columns.map(col => {
+  const columns: ColumnsType<Record<string, any>> = currentTableData.columns.map(col => {
     const isNumeric =
       col.type.toLowerCase().includes('int') ||
       col.type.toLowerCase().includes('float') ||
@@ -222,9 +262,15 @@ const ExcelDataTable: React.FC<ExcelDataTableProps> = ({ previewData, onDelete }
     return column;
   });
 
-  const fileName = previewData?.file_name || '';
-  const rowCount = previewData?.total || 0;
-  const columnCount = previewData?.columns?.length || 0;
+  // 获取文件名：多表模式从顶层获取，单表模式从当前表获取
+  const fileName = isMultiTable
+    ? (previewData as MultiTablePreviewData).file_name || currentTableData?.file_name || ''
+    : currentTableData?.file_name || '';
+  const rowCount = currentTableData?.total || 0;
+  const columnCount = currentTableData?.columns?.length || 0;
+
+  // 多表模式下的表信息
+  const tablesInfo = isMultiTable ? (previewData as MultiTablePreviewData).tables : null;
 
   return (
     <div className='h-full flex flex-col bg-[#ffffff80] dark:bg-[#ffffff29]'>
@@ -288,6 +334,56 @@ const ExcelDataTable: React.FC<ExcelDataTableProps> = ({ previewData, onDelete }
           </div>
         </div>
       </div>
+
+      {/* 多Sheet Tab切换区域 */}
+      {isMultiTable && tablesInfo && tablesInfo.length > 1 && (
+        <div className='flex-none px-4 bg-[#ffffff99] dark:bg-[rgba(255,255,255,0.08)] border-b border-[#d5e5f6] dark:border-[#ffffff33]'>
+          <Tabs
+            activeKey={activeTabKey}
+            onChange={handleTabChange}
+            size='small'
+            className='
+              excel-sheet-tabs
+              [&_.ant-tabs-nav]:!mb-0
+              [&_.ant-tabs-nav::before]:!border-none
+              [&_.ant-tabs-tab]:!py-2
+              [&_.ant-tabs-tab]:!px-4
+              [&_.ant-tabs-tab]:!mx-0.5
+              [&_.ant-tabs-tab]:!rounded-t-lg
+              [&_.ant-tabs-tab]:!border
+              [&_.ant-tabs-tab]:!border-b-0
+              [&_.ant-tabs-tab]:!border-transparent
+              [&_.ant-tabs-tab]:!bg-transparent
+              [&_.ant-tabs-tab]:!transition-all
+              [&_.ant-tabs-tab:hover]:!bg-blue-50/50
+              [&_.ant-tabs-tab:hover]:dark:!bg-[rgba(255,255,255,0.08)]
+              [&_.ant-tabs-tab-active]:!bg-white
+              [&_.ant-tabs-tab-active]:dark:!bg-[rgba(255,255,255,0.15)]
+              [&_.ant-tabs-tab-active]:!border-[#d5e5f6]
+              [&_.ant-tabs-tab-active]:dark:!border-[#ffffff33]
+              [&_.ant-tabs-tab-btn]:!text-slate-600
+              [&_.ant-tabs-tab-btn]:dark:!text-slate-300
+              [&_.ant-tabs-tab-active_.ant-tabs-tab-btn]:!text-blue-600
+              [&_.ant-tabs-tab-active_.ant-tabs-tab-btn]:dark:!text-blue-400
+              [&_.ant-tabs-tab-active_.ant-tabs-tab-btn]:!font-semibold
+              [&_.ant-tabs-ink-bar]:!hidden
+            '
+            items={tablesInfo.map((table, index) => ({
+              key: String(index),
+              label: (
+                <div className='flex items-center gap-2'>
+                  <span className='truncate max-w-[120px]' title={table.sheet_name}>
+                    {table.sheet_name}
+                  </span>
+                  <span className='text-[10px] px-1.5 py-0.5 rounded bg-slate-100 dark:bg-slate-700 text-slate-500 dark:text-slate-400'>
+                    {table.total?.toLocaleString() || 0}
+                  </span>
+                </div>
+              ),
+            }))}
+          />
+        </div>
+      )}
 
       {/* 表格区域 */}
       <div className='flex-1 min-h-0 overflow-hidden'>

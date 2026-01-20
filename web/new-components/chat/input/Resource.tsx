@@ -92,6 +92,11 @@ const Resource: React.FC<{
     const formData = new FormData();
     formData.append('doc_files', fileList?.[0] as any);
     setLoading(true);
+    
+    // 检查是否为Excel文件，如果是则默认使用多表模式
+    const fileName = fileList?.[0]?.name || '';
+    const isExcelFile = /\.(xlsx|xls)$/i.test(fileName);
+    
     const [_, res] = await apiInterceptors(
       postChatModeParamsFileLoad({
         convUid: chatId,
@@ -100,6 +105,7 @@ const Resource: React.FC<{
         model: modelValue,
         temperatureValue,
         maxNewTokensValue,
+        multiTableMode: isExcelFile ? true : undefined,  // Excel文件默认使用多表模式
         config: {
           timeout: 1000 * 60 * 60,
         },
@@ -112,7 +118,12 @@ const Resource: React.FC<{
       // 如果返回了preview_data，设置Excel预览数据
       if (res.preview_data) {
         console.log('✅ 设置Excel预览数据:', res.preview_data);
-        setExcelPreviewData?.(res.preview_data);
+        // 添加文件名到预览数据
+        const previewDataWithFileName = {
+          ...res.preview_data,
+          file_name: res.preview_data.file_name || res.file_name || fileName,
+        };
+        setExcelPreviewData?.(previewDataWithFileName);
       }
       await refreshHistory();
       await refreshDialogList();

@@ -15,7 +15,10 @@ from dbgpt_serve.datasource.api.endpoints import (
     check_api_key,
     global_system_app,
 )
-from dbgpt_serve.datasource.api.schemas import ExcelUploadResponse
+from dbgpt_serve.datasource.api.schemas import (
+    ExcelMultiTableUploadResponse,
+    ExcelUploadResponse,
+)
 from dbgpt_serve.datasource.service.excel_auto_register import ExcelAutoRegisterService
 
 logger = logging.getLogger(__name__)
@@ -158,6 +161,92 @@ async def get_chat_excel_info(content_hash: str) -> Result[dict]:
         raise
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"获取 Excel 信息失败: {str(e)}")
+
+
+@chat_excel_router.post(
+    "/chat-excel/upload-multi-tables",
+    dependencies=[Depends(check_api_key)],
+    response_model=Result[ExcelMultiTableUploadResponse],
+)
+async def upload_excel_multi_tables(
+    file: UploadFile = File(..., description="Excel file to upload"),
+    force_reimport: bool = Query(False, description="Force reimport even if cached"),
+) -> Result[ExcelMultiTableUploadResponse]:
+    """
+    上传 Excel 文件并将每个 sheet 存为独立的表（多表模式）
+
+    Args:
+        file: Excel 文件
+        force_reimport: 是否强制重新导入
+
+    Returns:
+        包含多表信息的上传结果，用于前端多sheet预览
+
+    Raises:
+        HTTPException: 上传或处理失败时抛出
+    """
+    # 检查文件类型
+    if not file.filename.endswith((".xlsx", ".xls")):
+        raise HTTPException(status_code=400, detail="只支持 Excel 文件 (.xlsx, .xls)")
+
+    # 保存临时文件
+    temp_file_path = None
+    try:
+        # 创建临时文件
+        with tempfile.NamedTemporaryFile(delete=False, suffix=".xlsx") as temp_file:
+            content = await file.read()
+            temp_file.write(content)
+            temp_file_path = temp_file.name
+
+        # 获取 LLM 客户端和模型
+        llm_client, model_name = await _get_llm_client_and_model()
+        
+        # 处理 Excel（多表模式）
+        excel_service = ExcelAutoRegisterService(
+            llm_client=llm_client, model_name=model_name, system_app=global_system_app
+        )
+        result = await blocking_func_to_async(
+            global_system_app,
+            excel_service.process_excel_multi_tables,
+            temp_file_path,
+            force_reimport,
+            file.filename,  # original_filename
+        )
+
+        # 如果是缓存数据，添加提示
+        if result["status"] == "cached":
+            result["message"] = f"检测到相同文件，使用缓存数据（共{len(result.get('tables', []))}个表）"
+
+        # 构建前端需要的多表预览数据结构
+        tables = result.get("tables", [])
+        preview_data = {
+            "file_name": file.filename,
+            "tables": [
+                {
+                    "sheet_name": t.get("sheet_name", ""),
+                    "table_name": t.get("table_name", ""),
+                    "columns": t.get("preview_data", {}).get("columns", []),
+                    "rows": t.get("preview_data", {}).get("rows", []),
+                    "total": t.get("row_count", 0),
+                    "file_name": file.filename,
+                }
+                for t in tables
+            ]
+        }
+        result["preview_data"] = preview_data
+
+        return Result.succ(ExcelMultiTableUploadResponse(**result))
+
+    except Exception as e:
+        logger.error(f"处理 Excel 文件失败: {e}", exc_info=True)
+        raise HTTPException(status_code=500, detail=f"处理 Excel 文件失败: {str(e)}")
+    finally:
+        # 清理临时文件
+        if temp_file_path and os.path.exists(temp_file_path):
+            try:
+                os.unlink(temp_file_path)
+            except Exception:
+                pass
 
 
 @chat_excel_router.post(

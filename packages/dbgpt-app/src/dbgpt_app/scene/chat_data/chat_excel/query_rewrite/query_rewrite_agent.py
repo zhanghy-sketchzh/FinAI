@@ -76,12 +76,14 @@ class QueryRewriteAgent:
         self.llm_client = llm_client
         self.model_name = model_name
 
-    def _extract_valid_column_names(self, table_schema_json: str) -> set:
+    def _extract_valid_column_names(self, table_schema_json: str) -> Union[set, Dict[str, set]]:
         """
         从schema中提取所有有效的字段名
+        支持单表和多表模式
         
         Returns:
-            有效字段名的集合
+            单表模式：返回字段名的集合 (set)
+            多表模式：返回字典 {table_name: set(column_names)}
         """
         try:
             if isinstance(table_schema_json, str):
@@ -92,16 +94,102 @@ class QueryRewriteAgent:
             if not isinstance(schema_obj, dict):
                 return set()
 
-            columns = schema_obj.get("columns", [])
-            return {col.get("column_name", "") for col in columns if col.get("column_name")}
+            # 检查是否为多表模式
+            if schema_obj.get("is_multi_table"):
+                # 多表模式：返回 {table_name: set(columns)} 的字典
+                table_columns_map = {}
+                
+                for table in schema_obj.get("tables", []):
+                    table_name = table.get("table_name", "")
+                    if not table_name:
+                        continue
+                    
+                    table_columns = set()
+                    
+                    # 方式1：从 create_table_sql 中解析字段名
+                    create_table_sql = table.get("create_table_sql", "")
+                    if create_table_sql:
+                        columns_from_sql = self._extract_columns_from_sql(create_table_sql)
+                        table_columns.update(columns_from_sql)
+                    
+                    # 方式2：从 columns 列表中提取
+                    columns = table.get("columns", [])
+                    for col in columns:
+                        if isinstance(col, dict):
+                            col_name = col.get("column_name", "")
+                            if col_name:
+                                table_columns.add(col_name)
+                        elif isinstance(col, str):
+                            if col:
+                                table_columns.add(col)
+                    
+                    table_columns_map[table_name] = table_columns
+                
+                return table_columns_map
+            else:
+                # 单表模式：返回字段名集合
+                valid_columns = set()
+                columns = schema_obj.get("columns", [])
+                for col in columns:
+                    if isinstance(col, dict):
+                        col_name = col.get("column_name", "")
+                        if col_name:
+                            valid_columns.add(col_name)
+                    elif isinstance(col, str):
+                        if col:
+                            valid_columns.add(col)
+
+            if valid_columns:
+                logger.debug(f"✅ 提取到的有效字段名数量: {len(valid_columns)}")
+                logger.debug(f"字段名示例（前5个）: {list(valid_columns)[:5]}")
+            else:
+                logger.warning(f"⚠️ 未提取到任何有效字段名，schema格式可能不正确")
+            return valid_columns
         except Exception as e:
             logger.warning(f"提取字段名失败: {e}")
             return set()
+    
+    def _extract_columns_from_sql(self, create_table_sql: str) -> set:
+        """
+        从 CREATE TABLE SQL 语句中提取字段名
+        
+        Args:
+            create_table_sql: CREATE TABLE SQL 语句
+            
+        Returns:
+            字段名的集合
+        """
+        import re
+        columns = set()
+        
+        try:
+            if not create_table_sql:
+                return columns
+            
+            # 匹配 CREATE TABLE ... (字段定义) 中的字段
+            # 模式1: "字段名" 类型
+            # 模式2: "字段名" 类型,
+            # 使用正则表达式匹配被双引号包围的字段名
+            pattern = r'"([^"]+)"'
+            matches = re.findall(pattern, create_table_sql)
+            
+            for match in matches:
+                # 过滤掉可能是表名的情况（通常在 CREATE TABLE 后面）
+                # 简单检查：如果 match 在 CREATE TABLE 语句的表名位置，跳过
+                # 但对于大多数情况，所有匹配的双引号内容都可能是字段名
+                columns.add(match)
+            
+            logger.debug(f"从SQL中提取到 {len(columns)} 个字段名")
+        except Exception as e:
+            logger.warning(f"从SQL提取字段名失败: {e}")
+        
+        return columns
 
     def _simplify_schema_for_rewrite(self, table_schema_json: str) -> str:
         """
         精简schema用于query改写，只保留必要字段信息
         移除 suggested_questions_zh、suggested_questions_en 等不必要字段
+        支持多表 schema（is_multi_table=True）
         """
         try:
             if isinstance(table_schema_json, str):
@@ -112,7 +200,11 @@ class QueryRewriteAgent:
             if not isinstance(schema_obj, dict):
                 return table_schema_json
 
-            # 只保留columns字段，移除建议问题等
+            # 检查是否为多表 schema
+            if schema_obj.get("is_multi_table"):
+                return self._simplify_multi_table_schema(schema_obj)
+
+            # 单表模式：只保留columns字段，移除建议问题等
             simplified = {}
             if "columns" in schema_obj:
                 # 精简每个列的信息
@@ -147,6 +239,120 @@ class QueryRewriteAgent:
         except Exception as e:
             logger.warning(f"精简schema失败: {e}，使用原始schema")
             return table_schema_json if isinstance(table_schema_json, str) else json.dumps(table_schema_json, ensure_ascii=False)
+
+    def _simplify_multi_table_schema(self, schema_obj: dict) -> str:
+        """
+        精简多表 schema，为每个表保留必要的字段信息
+        支持两种格式：
+        1. 旧格式：包含 columns 列表
+        2. 新格式：包含 create_table_sql 和 sample_rows
+        """
+        simplified = {
+            "is_multi_table": True,
+            "table_count": schema_obj.get("table_count", 0),
+            "table_names": schema_obj.get("table_names", []),
+            "table_description": schema_obj.get("table_description", ""),
+            "tables": [],
+        }
+        
+        for table in schema_obj.get("tables", []):
+            simplified_table = {
+                "table_name": table.get("table_name", ""),
+                "table_description": table.get("table_description", ""),
+            }
+            
+            # 新格式：直接使用 create_table_sql 和 sample_rows
+            if table.get("create_table_sql"):
+                simplified_table["create_table_sql"] = table.get("create_table_sql")
+                simplified_table["sample_rows"] = table.get("sample_rows", [])
+                simplified_table["columns"] = table.get("columns", [])  # 列名列表
+            else:
+                # 旧格式：处理 columns 列表
+                simplified_table["columns"] = []
+                for col in table.get("columns", []):
+                    if isinstance(col, dict):
+                        simplified_col = {
+                            "column_name": col.get("column_name", ""),
+                            "data_type": col.get("data_type", ""),
+                        }
+                        # 保留关键字段标记
+                        if col.get("is_key_field"):
+                            simplified_col["is_key_field"] = True
+                        # 保留业务知识
+                        if col.get("domain_knowledge"):
+                            simplified_col["domain_knowledge"] = col["domain_knowledge"]
+                        # 保留分类字段的可选值（精简版）
+                        if col.get("unique_values_top20"):
+                            values = col["unique_values_top20"]
+                            simplified_col["possible_values"] = values[:10] if len(values) > 10 else values
+                        # 保留数值统计摘要
+                        if col.get("statistics_summary"):
+                            simplified_col["stats"] = col["statistics_summary"]
+                        simplified_table["columns"].append(simplified_col)
+                    else:
+                        # 如果是字符串（列名），直接添加
+                        simplified_table["columns"].append(col)
+            
+            simplified["tables"].append(simplified_table)
+        
+        return json.dumps(simplified, ensure_ascii=False, indent=2)
+
+    def _format_multi_table_info_for_prompt(self, simplified_schema: str) -> str:
+        """
+        将多表 schema 格式化为 prompt 中易读的格式
+        包含建表 SQL 和样本数据
+        """
+        try:
+            schema_obj = json.loads(simplified_schema) if isinstance(simplified_schema, str) else simplified_schema
+        except Exception:
+            return simplified_schema
+        
+        if not schema_obj.get("is_multi_table"):
+            return simplified_schema
+        
+        result_parts = []
+        
+        for table in schema_obj.get("tables", []):
+            table_name = table.get("table_name", "未知表")
+            table_desc = table.get("table_description", "")
+            
+            table_section = f"### 表名: {table_name}\n"
+            if table_desc:
+                table_section += f"**表描述**: {table_desc}\n\n"
+            
+            # 添加建表 SQL
+            create_sql = table.get("create_table_sql", "")
+            if create_sql:
+                table_section += f"**建表SQL**:\n```sql\n{create_sql}\n```\n\n"
+            else:
+                # 如果没有建表SQL，从 columns 构建字段列表
+                columns = table.get("columns", [])
+                if columns:
+                    if isinstance(columns[0], dict):
+                        col_names = [col.get("column_name", "") for col in columns]
+                    else:
+                        col_names = columns
+                    table_section += f"**字段列表**: {', '.join(col_names)}\n\n"
+            
+            # 添加样本数据
+            sample_rows = table.get("sample_rows", [])
+            columns = table.get("columns", [])
+            if sample_rows:
+                table_section += "**样本数据（前2行）**:\n"
+                # 如果有列名，显示为表格形式
+                if columns:
+                    if isinstance(columns[0], dict):
+                        col_names = [col.get("column_name", "") for col in columns]
+                    else:
+                        col_names = columns
+                    table_section += f"列名: {col_names}\n"
+                for i, row in enumerate(sample_rows[:2]):
+                    table_section += f"行{i+1}: {row}\n"
+                table_section += "\n"
+            
+            result_parts.append(table_section)
+        
+        return "\n---\n".join(result_parts)
 
     async def rewrite_query_stream(
         self,
@@ -499,6 +705,14 @@ class QueryRewriteAgent:
         # 精简schema，移除建议问题等不必要信息
         simplified_schema = self._simplify_schema_for_rewrite(table_schema_json)
         
+        # 检测是否为多表模式
+        is_multi_table = False
+        try:
+            schema_obj = json.loads(table_schema_json) if isinstance(table_schema_json, str) else table_schema_json
+            is_multi_table = schema_obj.get("is_multi_table", False)
+        except Exception:
+            pass
+        
         # 提取样本数据：优先使用传入的 sample_rows，其次从 schema 中提取
         sample_rows_str = ""
         if sample_rows:
@@ -533,11 +747,39 @@ class QueryRewriteAgent:
 
         # 检测用户输入语言
         user_language = detect_language(user_query)
-        logger.info(f"🌐 Query改写 - 检测到用户输入语言: {user_language}")
+        logger.info(f"🌐 Query改写 - 检测到用户输入语言: {user_language}, 多表模式: {is_multi_table}")
 
-        # 根据语言选择prompt
+        # 根据语言和是否多表选择prompt
         if user_language == "zh":
-            prompt = f"""你是一个数据分析专家。用户提出了一个数据分析问题，你需要：
+            if is_multi_table:
+                prompt = self._build_multi_table_rewrite_prompt_zh(
+                    user_query, simplified_schema, table_description, 
+                    sample_rows_str, history_context
+                )
+            else:
+                prompt = self._build_single_table_rewrite_prompt_zh(
+                    user_query, simplified_schema, table_description,
+                    sample_rows_str, history_context
+                )
+        else:
+            if is_multi_table:
+                prompt = self._build_multi_table_rewrite_prompt_en(
+                    user_query, simplified_schema, table_description,
+                    sample_rows_str, history_context
+                )
+            else:
+                prompt = self._build_single_table_rewrite_prompt_en(
+                    user_query, simplified_schema, table_description,
+                    sample_rows_str, history_context
+                )
+        return prompt
+
+    def _build_single_table_rewrite_prompt_zh(
+        self, user_query: str, simplified_schema: str, table_description: str,
+        sample_rows_str: str, history_context: str
+    ) -> str:
+        """构建单表模式的中文改写prompt"""
+        return f"""你是一个数据分析专家。用户提出了一个数据分析问题，你需要：
 1. 根据用户历史问题和回答，充分理解用户的真实意图，补充改写当前问题
 2. 根据数据表的字段信息，补充完善用户的问题
 3. 明确指出可能用到的列（包括筛选条件列、分组维度列、聚合指标列）
@@ -563,7 +805,7 @@ class QueryRewriteAgent:
 === 输出格式（JSON） ===
 请严格按照以下JSON格式输出：
 {{
-  "is_relevant": true,  // 布尔值，表示用户问题是否与数据表分析相关。如果是闲聊（如"今天天气怎么样"、"你吃饭了吗"）则为false
+  "is_relevant": true,
   "rewritten_query": "改写后的完整问题，明确指出需要分析的维度和指标",
   "relevant_columns": [
     {{
@@ -575,57 +817,111 @@ class QueryRewriteAgent:
     "建议1：具体的分析步骤或注意事项",
     "建议2：...",
     "建议3：..."
-    ...
   ],
-  "analysis_logic": "分析逻辑的详细说明，包括：1) 需要筛选哪些数据 2) 按什么维度分组 3) 计算哪些指标 4) 如何排序或对比",
-  "domain_knowledge": {{
-    "column_name": "字段名（如果用户纠正或补充了某个字段的使用方法）",
-    "knowledge": "用户补充的业务知识或数据处理技巧（例如：'该字段格式为H1,H2，逗号前是H1绩效，逗号后是H2绩效，需要用SPLIT_PART函数分割'）"
-  }}
+  "analysis_logic": "分析逻辑的详细说明",
+  "domain_knowledge": null
 }}
-
-
-**关于 is_relevant 的说明**：
-- 判断用户问题是否与当前数据表的分析相关
-- 如果是数据分析问题（如"销售额是多少"、"利润排名"、"同比增长"等），设为 true
-- 如果是闲聊或与数据表无关的问题（如"今天天气怎么样"、"你吃饭了吗"、"讲个笑话"等），设为 false
-- 当 is_relevant 为 false 时，其他字段可以简化或省略
-
-**关于 domain_knowledge 的说明**：
-- 只有当用户明确纠正、补充或说明了某个字段的使用方法时才需要填写
-- 如果用户只是普通提问，不需要填写此字段（可以省略或设为 null）
-- 知识应该是可复用的、对未来分析有帮助的关键信息,比如业务规则、数据处理技巧等,这部分知识会作为领域知识保存到数据库中,用于后续的分析和推理,可以复用这些知识来回答用户的问题，如果上面已经记录了领域知识，请不要重复记录。
-
-**重要 - 语言要求**：
-- 用户的问题是**中文**
-- 你必须用**中文**回复JSON中的所有字段
-- "rewritten_query"、"usage"、"analysis_suggestions"、"analysis_logic" 等字段必须使用**中文**
-- 即使表字段名是中英文混合，你的描述和分析也必须使用**中文**
-
-**重要 - 字符串/字段精确匹配要求**：
-- 在改写问题时，如果用户提到了具体的部门名称、分类值等字符串，必须保持完全一致
-- 如果用户问题中包含具体的字符串值，在"rewritten_query"中必须保持原样，不能修改
 
 **严格要求 - 字段名必须来自提供的列表**：
 - relevant_columns 中的 column_name 必须**严格从上面提供的字段信息中选择**
 - **禁止推测、创造或编造任何不在字段列表中的字段名**
-- 如果找不到完全匹配的字段，宁可不填写该字段，也不要编造类似的字段名
 
 现在请结合历史上下文及用户当前问题，分析用户的真实意图，补充改写当前问题并用中文输出JSON：
 """
-        else:
-            prompt = f"""You are a data analysis expert. The user has asked a data analysis question. You need to:
+
+    def _build_multi_table_rewrite_prompt_zh(
+        self, user_query: str, simplified_schema: str, table_description: str,
+        sample_rows_str: str, history_context: str
+    ) -> str:
+        """构建多表模式的中文改写prompt"""
+        # 解析 schema 以获取各表的建表SQL和样本数据
+        tables_info_str = self._format_multi_table_info_for_prompt(simplified_schema)
+        
+        # 提取字段差异警告（如果有）
+        schema_diff_warning = ""
+        try:
+            schema_obj = json.loads(simplified_schema) if isinstance(simplified_schema, str) else simplified_schema
+            if schema_obj.get("schema_differences"):
+                schema_diff_warning = f"\n\n{schema_obj['schema_differences']}\n"
+        except Exception:
+            pass
+        
+        return f"""你是一个数据分析专家。用户提出了一个需要**多表联合查询**的数据分析问题。
+
+**重要：这是一个多表查询场景，你需要考虑如何联合使用多个表来回答用户的问题。**
+
+=== 可用的数据表 ===
+{tables_info_str}
+{schema_diff_warning}
+**注意**：
+1. 上面包含多个表的建表SQL和样本数据
+2. 你需要分析哪些表和字段与用户问题相关
+3. 如果需要跨表查询，考虑使用 UNION ALL 合并相似结构的表，或使用 JOIN 关联不同表
+4. **不同表的字段名可能不同，但含义相似**，请仔细对比各表的字段名和样本数据来理解字段对应关系
+5. **⚠️ 关键：在使用UNION ALL时，必须确保SELECT的字段在所有表中都存在！如果某个字段只存在于部分表，请使用NULL或默认值填充不存在该字段的表**
+
+=== 数据表描述 ===
+{table_description}
+
+{history_context}
+=== 用户当前问题 ===
+{user_query}
+
+=== 输出格式（JSON） ===
+请严格按照以下JSON格式输出：
+{{
+  "is_relevant": true,
+  "rewritten_query": "改写后的完整问题，明确指出需要从哪些表查询、分析的维度和指标",
+  "relevant_columns": [
+    {{
+      "table_name": "表名（多表时必须指定）",
+      "column_name": "列名（必须与建表SQL中的列名完全一致）",
+      "usage": "用途说明（如：筛选条件/分组维度/聚合指标）"
+    }}
+  ],
+  "analysis_suggestions": [
+    "建议1：说明如何联合多个表进行查询",
+    "建议2：如果表结构相似，建议使用 UNION ALL 合并后再分析",
+    "建议3：如果需要关联不同表，说明 JOIN 的方式",
+    "建议4：..."
+  ],
+  "analysis_logic": "多表分析逻辑的详细说明，包括：1) 使用哪些表 2) 如何联合（UNION/JOIN）3) 筛选条件 4) 分组维度 5) 聚合指标",
+  "multi_table_strategy": {{
+    "strategy": "UNION_ALL 或 JOIN 或 SINGLE_TABLE",
+    "tables_to_use": ["表名1", "表名2"],
+    "join_condition": "如果是JOIN，说明关联条件；如果是UNION_ALL，说明字段映射关系"
+  }},
+  "domain_knowledge": null
+}}
+
+**多表查询策略说明**：
+- **UNION_ALL**：当多个表结构相似，需要合并所有数据进行分析时使用
+- **JOIN**：当需要关联不同表的数据时使用
+- **SINGLE_TABLE**：如果只需要查询单个表
+
+**严格要求**：
+- relevant_columns 中的 column_name 必须**严格从上面提供的建表SQL中选择**
+- 多表模式下，必须在 relevant_columns 中指定 table_name
+- **不同表的相同含义字段名可能不同，必须分别列出**
+- **禁止推测、创造或编造任何不在字段列表中的字段名**
+
+现在请结合历史上下文及用户当前问题，分析用户的真实意图，考虑多表联合查询的方式，补充改写当前问题并用中文输出JSON：
+"""
+
+    def _build_single_table_rewrite_prompt_en(
+        self, user_query: str, simplified_schema: str, table_description: str,
+        sample_rows_str: str, history_context: str
+    ) -> str:
+        """构建单表模式的英文改写prompt"""
+        return f"""You are a data analysis expert. The user has asked a data analysis question. You need to:
 1. Understand the user's real intent based on historical questions and answers, and enhance the current question
 2. Enhance the user's question based on the data table field information
 3. Clearly identify the columns that may be used (including filter condition columns, grouping dimension columns, and aggregation indicator columns)
 4. Provide 3-5 analysis suggestions explaining how to analyze this question
 5. Give a clear analysis logic
-6. If the user has corrected or supplemented field usage methods, business rules, data processing techniques, or other key knowledge in the conversation or current historical Q&A context, extract and record it as the domain_knowledge field
 
 === Data Table Field Information ===
 {simplified_schema}
-
-**Note**: The field information may contain a `domain_knowledge` field, which is business knowledge learned from previous user conversations. Please prioritize using this.
 
 === Sample Data (2 rows) ===
 {sample_rows_str if sample_rows_str else "No sample data available"}
@@ -640,7 +936,7 @@ class QueryRewriteAgent:
 === Output Format (JSON) ===
 Please strictly follow the following JSON format:
 {{
-  "is_relevant": true,  // Boolean value indicating whether the user's question is related to data table analysis. If it's small talk (e.g., "How's the weather today", "Did you eat"), set to false
+  "is_relevant": true,
   "rewritten_query": "The enhanced complete question, clearly indicating the dimensions and indicators to be analyzed",
   "relevant_columns": [
     {{
@@ -652,46 +948,98 @@ Please strictly follow the following JSON format:
     "Suggestion 1: Specific analysis steps or considerations",
     "Suggestion 2: ...",
     "Suggestion 3: ..."
-    ...
   ],
-  "analysis_logic": "Detailed explanation of analysis logic, including: 1) Which data to filter 2) What dimension to group by 3) Which indicators to calculate 4) How to sort or compare",
-  "domain_knowledge": {{
-    "column_name": "Field name (if the user has corrected or supplemented the usage method of a field)",
-    "knowledge": "Business knowledge or data processing techniques supplemented by the user (e.g., 'This field format is H1,H2, before the comma is H1 performance, after the comma is H2 performance, need to use SPLIT_PART function to split')"
-  }}
+  "analysis_logic": "Detailed explanation of analysis logic",
+  "domain_knowledge": null
 }}
-
-
-
-**About is_relevant**:
-- Determine whether the user's question is related to the analysis of the current data table
-- If it's a data analysis question (e.g., "What is the sales amount", "Profit ranking", "Year-over-year growth"), set to true
-- If it's small talk or unrelated to the data table (e.g., "How's the weather today", "Did you eat", "Tell me a joke"), set to false
-- When is_relevant is false, other fields can be simplified or omitted
-
-**About domain_knowledge**:
-- Only fill in when the user explicitly corrects, supplements, or explains the usage method of a field
-- If the user is just asking a normal question, this field is not required (can be omitted or set to null)
-- Knowledge should be reusable and helpful for future analysis, such as business rules, data processing techniques, etc. This knowledge will be saved to the database as domain knowledge for subsequent analysis and reasoning, and can be reused to answer user questions. If domain knowledge has already been recorded above, please do not repeat it.
-
-**IMPORTANT - Language Requirement**:
-- The user's question is in ENGLISH
-- You MUST respond in ENGLISH for ALL fields in the JSON output
-- The "rewritten_query", "usage", "analysis_suggestions", and "analysis_logic" fields MUST be in ENGLISH
-- Even though the table field names are in Chinese, your descriptions and analysis MUST be in ENGLISH
-
-**IMPORTANT - String Exact Matching Requirement**:
-- When rewriting the question, if the user mentions specific department names, category values, or other strings, they must be kept exactly as they are
-- If the user's question contains specific string values, they must be kept unchanged in "rewritten_query"
 
 **STRICT REQUIREMENT - Column names must come from the provided list**:
 - The column_name in relevant_columns MUST be **strictly selected from the field information provided above**
 - **DO NOT guess, create, or fabricate any column names that are not in the field list**
-- If you cannot find an exact match, leave it out rather than inventing a similar column name
 
-Now please combine the historical context and the user's current question, analyze the user's real intent, enhance the current question and output JSON IN ENGLISH:
+Now please analyze the user's real intent and output JSON IN ENGLISH:
 """
-        return prompt
+
+    def _build_multi_table_rewrite_prompt_en(
+        self, user_query: str, simplified_schema: str, table_description: str,
+        sample_rows_str: str, history_context: str
+    ) -> str:
+        """构建多表模式的英文改写prompt"""
+        # 解析 schema 以获取各表的建表SQL和样本数据
+        tables_info_str = self._format_multi_table_info_for_prompt(simplified_schema)
+        
+        # 提取字段差异警告（如果有）
+        schema_diff_warning = ""
+        try:
+            schema_obj = json.loads(simplified_schema) if isinstance(simplified_schema, str) else simplified_schema
+            if schema_obj.get("schema_differences"):
+                # 将中文警告转换为英文
+                diff_text = schema_obj['schema_differences']
+                # 简单处理：保留原文，因为警告中包含具体字段名
+                schema_diff_warning = f"\n\n{diff_text}\n"
+        except Exception:
+            pass
+        
+        return f"""You are a data analysis expert. The user has asked a data analysis question that requires **multi-table query**.
+
+**IMPORTANT: This is a multi-table query scenario. You need to consider how to combine multiple tables to answer the user's question.**
+
+=== Available Data Tables ===
+{tables_info_str}
+{schema_diff_warning}
+**Note**:
+1. The above contains CREATE TABLE SQL and sample data for each table
+2. You need to analyze which tables and fields are relevant to the user's question
+3. If cross-table query is needed, consider using UNION ALL to merge similar tables, or JOIN to relate different tables
+4. **Different tables may have different column names but similar meanings**, please carefully compare column names and sample data to understand the field mapping
+5. **⚠️ CRITICAL: When using UNION ALL, ensure that the SELECTed fields exist in ALL tables! If a field only exists in some tables, use NULL or default values to fill in the tables that don't have that field**
+
+=== Data Table Description ===
+{table_description}
+
+{history_context}
+=== User's Current Question ===
+{user_query}
+
+=== Output Format (JSON) ===
+Please strictly follow the following JSON format:
+{{
+  "is_relevant": true,
+  "rewritten_query": "The enhanced complete question, clearly indicating which tables to query, dimensions and indicators to analyze",
+  "relevant_columns": [
+    {{
+      "table_name": "Table name (required for multi-table)",
+      "column_name": "Column name (must match exactly with CREATE TABLE SQL)",
+      "usage": "Usage description (e.g., filter condition/grouping dimension/aggregation indicator)"
+    }}
+  ],
+  "analysis_suggestions": [
+    "Suggestion 1: Explain how to combine multiple tables for query",
+    "Suggestion 2: If table structures are similar, suggest using UNION ALL to merge before analysis",
+    "Suggestion 3: If different tables need to be related, explain the JOIN method",
+    "Suggestion 4: ..."
+  ],
+  "analysis_logic": "Detailed explanation of multi-table analysis logic, including: 1) Which tables to use 2) How to combine (UNION/JOIN) 3) Filter conditions 4) Grouping dimensions 5) Aggregation indicators",
+  "multi_table_strategy": {{
+    "strategy": "UNION_ALL or JOIN or SINGLE_TABLE",
+    "tables_to_use": ["table1", "table2"],
+    "join_condition": "If JOIN, explain the join condition; if UNION_ALL, explain the field mapping"
+  }},
+  "domain_knowledge": null
+}}
+
+**Multi-table Query Strategy**:
+- **UNION_ALL**: Use when multiple tables have similar structures and need to merge all data for analysis
+- **JOIN**: Use when data from different tables needs to be related
+- **SINGLE_TABLE**: If only one table needs to be queried
+
+**STRICT REQUIREMENT**:
+- The column_name in relevant_columns MUST be **strictly selected from the CREATE TABLE SQL provided above**
+- In multi-table mode, table_name MUST be specified in relevant_columns
+- **Different tables may have different column names for the same meaning - list them separately**
+
+Now please analyze the user's real intent, consider multi-table query approach, and output JSON IN ENGLISH:
+"""
 
     async def _llm_based_rewrite_stream(
         self,
@@ -728,7 +1076,19 @@ Now please combine the historical context and the user's current question, analy
 
         # 提取有效字段名用于校验
         valid_column_names = self._extract_valid_column_names(table_schema_json)
-        logger.debug(f"有效字段名数量: {len(valid_column_names)}")
+        if valid_column_names:
+            if isinstance(valid_column_names, dict):
+                # 多表模式
+                total_cols = sum(len(cols) for cols in valid_column_names.values())
+                logger.info(f"✅ 多表模式：提取到 {len(valid_column_names)} 个表，共 {total_cols} 个字段用于校验")
+                for tbl_name, tbl_cols in list(valid_column_names.items())[:3]:
+                    logger.debug(f"  表 '{tbl_name}': {len(tbl_cols)} 个字段")
+            else:
+                # 单表模式
+                logger.info(f"✅ 单表模式：提取到 {len(valid_column_names)} 个有效字段名用于校验")
+                logger.debug(f"有效字段名（前10个）: {list(valid_column_names)[:10]}")
+        else:
+            logger.warning(f"⚠️ 未提取到有效字段名，将跳过字段名校验")
 
         # 检测用户语言
         user_language = detect_language(user_query)
@@ -854,7 +1214,7 @@ Please carefully check the field list provided above and regenerate using only c
                 raise
 
     def _parse_rewrite_result(
-        self, llm_output: str, original_query: str, valid_column_names: set = None
+        self, llm_output: str, original_query: str, valid_column_names: Union[set, Dict[str, set]] = None
     ) -> Dict:
         """
         解析LLM输出的JSON结果
@@ -864,7 +1224,7 @@ Please carefully check the field list provided above and regenerate using only c
         Args:
             llm_output: LLM输出的文本
             original_query: 原始用户问题
-            valid_column_names: 有效的字段名集合，用于校验
+            valid_column_names: 有效的字段名，单表模式为set，多表模式为dict {table_name: set(columns)}
         """
         try:
             # 提取JSON部分
@@ -886,8 +1246,10 @@ Please carefully check the field list provided above and regenerate using only c
 
                 # 验证 relevant_columns 格式和字段名是否存在
                 relevant_columns = result.get("relevant_columns", [])
-                if relevant_columns:
+                if relevant_columns and valid_column_names:
                     invalid_columns = []
+                    is_multi_table = isinstance(valid_column_names, dict)
+                    
                     for idx, col in enumerate(relevant_columns):
                         if not isinstance(col, dict) or "column_name" not in col:
                             logger.error(f"relevant_columns[{idx}] 格式错误: {col}")
@@ -895,17 +1257,57 @@ Please carefully check the field list provided above and regenerate using only c
                                 f"relevant_columns[{idx}] 缺少 'column_name' 字段"
                             )
                         
-                        # 校验字段名是否存在于表中
                         col_name = col.get("column_name", "")
-                        if valid_column_names and col_name not in valid_column_names:
-                            invalid_columns.append(col_name)
+                        table_name = col.get("table_name", "")
+                        
+                        if not col_name:
+                            continue
+                        
+                        # 多表模式：需要校验字段是否存在于指定的表中
+                        if is_multi_table:
+                            if not table_name:
+                                # 多表模式下必须指定表名
+                                logger.warning(f"多表模式下字段 '{col_name}' 未指定 table_name")
+                                # 检查字段是否存在于任意表中
+                                found_in_any_table = False
+                                for tbl_name, tbl_cols in valid_column_names.items():
+                                    if col_name in tbl_cols:
+                                        found_in_any_table = True
+                                        logger.info(f"字段 '{col_name}' 存在于表 '{tbl_name}' 中")
+                                        break
+                                
+                                if not found_in_any_table:
+                                    invalid_columns.append(f"{col_name} (未指定表名且不存在于任何表中)")
+                            else:
+                                # 检查指定的表是否存在
+                                if table_name not in valid_column_names:
+                                    invalid_columns.append(f"{table_name}.{col_name} (表 '{table_name}' 不存在)")
+                                    logger.warning(f"表 '{table_name}' 不存在于有效表列表中")
+                                else:
+                                    # 检查字段是否存在于指定的表中
+                                    table_cols = valid_column_names[table_name]
+                                    if col_name not in table_cols:
+                                        invalid_columns.append(f"{table_name}.{col_name} (字段不存在于该表)")
+                                        logger.warning(f"字段 '{col_name}' 不存在于表 '{table_name}' 中")
+                                        logger.debug(f"表 '{table_name}' 的有效字段（前10个）: {list(table_cols)[:10]}")
+                        else:
+                            # 单表模式：直接校验字段名
+                            pure_col_name = col_name
+                            if "." in col_name:
+                                parts = col_name.split(".", 1)
+                                if len(parts) == 2:
+                                    pure_col_name = parts[1].strip('"').strip("'")
+                            
+                            if pure_col_name not in valid_column_names and col_name not in valid_column_names:
+                                invalid_columns.append(col_name)
+                                logger.warning(f"字段名校验失败: '{col_name}' 不在有效字段列表中")
                     
                     # 如果有无效字段名，抛出 InvalidColumnError 触发重试
                     if invalid_columns:
                         error_msg = f"以下字段名不存在于数据表中: {invalid_columns}"
                         logger.warning(f"⚠️ 字段校验失败: {error_msg}，将触发重试")
                         raise InvalidColumnError(error_msg, invalid_columns)
-
+    
                 # 添加原始问题
                 result["original_query"] = original_query
 

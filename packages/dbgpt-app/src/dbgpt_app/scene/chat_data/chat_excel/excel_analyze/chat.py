@@ -100,20 +100,53 @@ class ChatExcel(BaseChat):
                     if meta_db_path.exists():
                         conn = sqlite3.connect(str(meta_db_path))
                         cursor = conn.cursor()
-                        cursor.execute(
-                            "SELECT data_schema_json FROM excel_metadata WHERE content_hash = ?",
-                            (self._content_hash,),
-                        )
-                        result = cursor.fetchone()
-                        conn.close()
-
-                        if result and result[0]:
-                            select_param_dict["data_schema_json"] = result[0]
-                            self.select_param = (
-                                json.dumps(select_param_dict, ensure_ascii=False)
-                                if isinstance(self.select_param, str)
-                                else select_param_dict
+                        
+                        # 先尝试从多表元数据表查询（excel_tables_metadata）
+                        try:
+                            cursor.execute(
+                                """SELECT table_name, data_schema_json, create_table_sql, row_count, column_count, sheet_name
+                                   FROM excel_tables_metadata WHERE file_hash = ?""",
+                                (self._content_hash,),
                             )
+                            multi_table_results = cursor.fetchall()
+                        except Exception:
+                            multi_table_results = []
+                        
+                        if multi_table_results and len(multi_table_results) > 1:
+                            # 多表模式：从 excel_tables_metadata 加载
+                            all_tables_info = []
+                            for row in multi_table_results:
+                                table_info = {
+                                    "table_name": row[0],
+                                    "data_schema_json": row[1],
+                                    "create_table_sql": row[2],
+                                    "row_count": row[3],
+                                    "column_count": row[4],
+                                    "sheet_name": row[5] if len(row) > 5 else row[0],
+                                }
+                                all_tables_info.append(table_info)
+                            select_param_dict["all_tables_info"] = all_tables_info
+                            # 使用第一个表的 schema 作为默认
+                            if multi_table_results[0][1]:
+                                select_param_dict["data_schema_json"] = multi_table_results[0][1]
+                            logger.info(f"多表模式：从 excel_tables_metadata 加载了 {len(all_tables_info)} 个表的信息")
+                        else:
+                            # 单表模式：从 excel_metadata 查询
+                            cursor.execute(
+                                "SELECT data_schema_json FROM excel_metadata WHERE content_hash = ?",
+                                (self._content_hash,),
+                            )
+                            result = cursor.fetchone()
+                            if result and result[0]:
+                                select_param_dict["data_schema_json"] = result[0]
+                        
+                        conn.close()
+                        
+                        self.select_param = (
+                            json.dumps(select_param_dict, ensure_ascii=False)
+                            if isinstance(self.select_param, str)
+                            else select_param_dict
+                        )
                 except Exception as e:
                     logger.warning(f"从数据库重新加载 data_schema_json 失败: {e}")
 
@@ -143,11 +176,24 @@ class ChatExcel(BaseChat):
                     duckdb_table_name,
                 )
                 # 使用 excel_reader 中实际获取到的表名（可能是从数据库查询得到的）
-                self._curr_table = self.excel_reader.table_name
+                table_name_from_reader = self.excel_reader.table_name
+                # 检查是否为多表模式（表名包含逗号）
+                if "," in table_name_from_reader:
+                    table_list = [t.strip() for t in table_name_from_reader.split(",")]
+                    self._all_table_names = table_list
+                    self._is_multi_table_mode = True
+                    self._curr_table = table_list[0]  # 使用第一个表名
+                else:
+                    self._all_table_names = [table_name_from_reader]
+                    self._is_multi_table_mode = False
+                    self._curr_table = table_name_from_reader
                 use_cache_success = True
                 # 确保 database_file_path 与实际使用的 duckdb_path 一致
                 database_file_path = duckdb_path
-                logger.info(f"成功使用DuckDB缓存，表名: {self._curr_table}")
+                if self._is_multi_table_mode:
+                    logger.info(f"成功使用DuckDB缓存，多表模式，表: {self._all_table_names}")
+                else:
+                    logger.info(f"成功使用DuckDB缓存，表名: {self._curr_table}")
             except Exception as e:
                 logger.warning(f"使用DuckDB缓存失败，回退到重新导入: {e}")
                 # 删除损坏的缓存文件
@@ -164,7 +210,7 @@ class ChatExcel(BaseChat):
             actual_db_path = duckdb_path if duckdb_path else database_file_path
             
             # 检查数据库中是否已有表（可能是 excel_auto_register 创建的）
-            existing_table_name = None
+            existing_table_names = []
             if actual_db_path and os.path.exists(actual_db_path):
                 try:
                     import duckdb as duckdb_check
@@ -176,23 +222,31 @@ class ChatExcel(BaseChat):
                     tables_result = check_conn.execute(query).fetchall()
                     check_conn.close()
                     if tables_result:
-                        existing_table_name = tables_result[0][0]
-                        logger.info(f"发现已存在的表: {existing_table_name}")
+                        existing_table_names = [t[0] for t in tables_result]
+                        logger.info(f"发现已存在的表: {existing_table_names}")
                 except Exception as check_e:
                     logger.warning(f"检查已存在表失败: {check_e}")
             
-            if existing_table_name:
+            if existing_table_names:
                 # 使用已存在的表，不需要重新导入
-                self._curr_table = existing_table_name
+                # 多表模式：保存所有表名，_curr_table 使用第一个表名
+                self._all_table_names = existing_table_names
+                self._is_multi_table_mode = len(existing_table_names) > 1
+                self._curr_table = existing_table_names[0]
                 self.excel_reader = self._create_reader_from_duckdb(
                     chat_param.chat_session_id,
                     actual_db_path,
                     file_name,
-                    existing_table_name,
+                    self._curr_table,  # 使用第一个表名初始化
                 )
-                logger.info(f"使用已存在的DuckDB表: {existing_table_name}")
+                if self._is_multi_table_mode:
+                    logger.info(f"使用多表模式，表: {existing_table_names}")
+                else:
+                    logger.info(f"使用已存在的DuckDB表: {self._curr_table}")
             else:
                 # 没有已存在的表，需要重新创建
+                self._all_table_names = ["data_analysis_table"]
+                self._is_multi_table_mode = False
                 self._curr_table = "data_analysis_table"
                 self.excel_reader = ExcelReader(
                     chat_param.chat_session_id,
@@ -324,18 +378,47 @@ class ChatExcel(BaseChat):
         detected_language = detect_language(user_input)
         self._detected_language = detected_language
 
+        # 获取选中的表列表（优先使用 _selected_tables，否则使用 _all_table_names）
+        selected_tables = getattr(self, "_selected_tables", None)
+        if not selected_tables:
+            if getattr(self, "_is_multi_table_mode", False) and hasattr(self, "_all_table_names"):
+                selected_tables = self._all_table_names
+            else:
+                selected_tables = [self._curr_table]
+        
+        is_multi_table = len(selected_tables) > 1
+
         from dbgpt_app.scene.chat_data.chat_excel.excel_analyze.prompt import (
             get_prompt_templates_by_language,
         )
 
-        prompt_templates = get_prompt_templates_by_language(detected_language)
+        # 根据是否多表模式获取对应的 prompt 模板
+        prompt_templates = get_prompt_templates_by_language(detected_language, is_multi_table_mode=is_multi_table)
 
-        table_schema = await blocking_func_to_async(
-            self._executor, self.excel_reader.get_create_table_sql, self._curr_table
-        )
-        colunms, datas = await blocking_func_to_async(
-            self._executor, self.excel_reader.get_sample_data, self._curr_table
-        )
+        # 只获取选中表的 schema 和样本数据
+        all_schemas = []
+        all_sample_data = []
+        for tbl_name in selected_tables:
+            try:
+                tbl_schema = await blocking_func_to_async(
+                    self._executor, self.excel_reader.get_create_table_sql, tbl_name
+                )
+                all_schemas.append(f"-- 表: {tbl_name}\n{tbl_schema}")
+                
+                tbl_cols, tbl_data = await blocking_func_to_async(
+                    self._executor, self.excel_reader.get_sample_data, tbl_name
+                )
+                all_sample_data.append((tbl_name, tbl_cols, tbl_data))
+            except Exception as e:
+                logger.warning(f"获取表 {tbl_name} 的 schema 失败: {e}")
+        
+        table_schema = "\n\n".join(all_schemas)
+        # 使用第一个表的示例数据
+        if all_sample_data:
+            _, colunms, datas = all_sample_data[0]
+        else:
+            colunms, datas = [], []
+        logger.info(f"生成输入值：使用 {len(selected_tables)} 个表的 schema: {selected_tables}")
 
         data_time_range = await blocking_func_to_async(
             self._executor, self._get_data_time_range, self._curr_table
@@ -360,20 +443,57 @@ class ChatExcel(BaseChat):
                 rewrite_result = self._query_rewrite_result
 
                 if rewrite_result and rewrite_result.get("rewritten_query"):
+                    # 构建 query_rewrite_info，包含多表策略信息
+                    multi_table_strategy = rewrite_result.get("multi_table_strategy", {})
+                    strategy_info = ""
+                    if multi_table_strategy and is_multi_table:
+                        strategy = multi_table_strategy.get("strategy", "")
+                        tables_to_use = multi_table_strategy.get("tables_to_use", [])
+                        join_condition = multi_table_strategy.get("join_condition", "")
+                        strategy_info = f"""
+多表查询策略：
+  策略类型：{strategy}
+  使用的表：{', '.join(tables_to_use) if tables_to_use else '未指定'}
+  关联说明：{join_condition}
+"""
+                    
+                    # 如果是多表模式，添加字段差异警告
+                    schema_diff_warning = ""
+                    if is_multi_table and len(selected_tables) > 1:
+                        # 分析字段差异
+                        all_columns_by_table = {}
+                        all_tables_info = select_param_dict.get("all_tables_info", [])
+                        
+                        for table_info in all_tables_info:
+                            tbl_name = table_info.get("table_name", "")
+                            if tbl_name in selected_tables:
+                                # 从建表SQL中提取字段
+                                create_sql = table_info.get("create_table_sql", "")
+                                if create_sql:
+                                    import re
+                                    col_matches = re.findall(r'"([^"]+)"', create_sql)
+                                    all_columns_by_table[tbl_name] = set(col_matches)
+                        
+                        if len(all_columns_by_table) > 1:
+                            diff_warning = self._analyze_schema_differences(
+                                all_columns_by_table, selected_tables
+                            )
+                            if diff_warning:
+                                schema_diff_warning = f"\n\n⚠️ 字段差异提醒：\n{diff_warning}\n"
+                    
                     query_rewrite_info = f"""
-
 
 用户的问题：{rewrite_result["rewritten_query"]}
 
 相关字段：
-{self._format_relevant_columns(rewrite_result.get("relevant_columns", []))}
+{self._format_relevant_columns_with_table(rewrite_result.get("relevant_columns", []))}
 
 分析建议：
 {self._format_analysis_suggestions(rewrite_result.get("analysis_suggestions", []))}
 
 分析逻辑：
 {rewrite_result.get("analysis_logic", "")}
-
+{strategy_info}{schema_diff_warning}
 接下来请按照格式要求生成sql语句进行查询。
 """
                     extracted_knowledge = rewrite_result.get("_extracted_knowledge")
@@ -382,38 +502,12 @@ class ChatExcel(BaseChat):
                             extracted_knowledge, data_schema_json
                         )
 
-                    try:
-                        schema_obj = (
-                            json.loads(data_schema_json)
-                            if isinstance(data_schema_json, str)
-                            else data_schema_json
-                        )
-                        all_columns = schema_obj.get("columns", [])
-
-                        relevant_col_names = [
-                            col.get("column_name", "")
-                            for col in rewrite_result.get("relevant_columns", [])
-                        ]
-
-                        relevant_columns_details = []
-                        for col_name in relevant_col_names:
-                            for col_info in all_columns:
-                                if col_info.get("column_name") == col_name:
-                                    relevant_columns_details.append(col_info)
-                                    break
-
-                        if relevant_columns_details:
-                            relevant_columns_info = (
-                                self._format_relevant_columns_for_prompt(
-                                    relevant_columns_details
-                                )
-                            )
-                        else:
-                            relevant_columns_info = "未找到相关列的详细信息。"
-
-                    except Exception as col_err:
-                        logger.warning(f"提取列详细信息失败: {col_err}")
-                        relevant_columns_info = ""
+                    # 构建重点关注字段信息（包含表名）
+                    relevant_columns_info = await self._build_relevant_columns_info_with_table(
+                        rewrite_result.get("relevant_columns", []),
+                        select_param_dict,
+                        selected_tables
+                    )
                 else:
                     # 如果查询改写失败或没有结果，设置默认值
                     query_rewrite_info = ""
@@ -423,13 +517,34 @@ class ChatExcel(BaseChat):
             _ANALYSIS_CONSTRAINTS_TEMPLATE,
         )
 
-        analysis_constraints = _ANALYSIS_CONSTRAINTS_TEMPLATE.format(
-            table_name=self._curr_table, display_type=self._generate_numbered_list()
-        )
+        # 根据是否多表模式选择约束条件
+        if is_multi_table:
+            from dbgpt_app.scene.chat_data.chat_excel.excel_analyze.prompt import (
+                _ANALYSIS_CONSTRAINTS_MULTI_TABLE_ZH,
+                _ANALYSIS_CONSTRAINTS_MULTI_TABLE_EN,
+            )
+            # 根据检测到的语言选择模板
+            multi_table_template = (
+                _ANALYSIS_CONSTRAINTS_MULTI_TABLE_EN
+                if detected_language == "en"
+                else _ANALYSIS_CONSTRAINTS_MULTI_TABLE_ZH
+            )
+            table_names_str = ", ".join(selected_tables)
+            analysis_constraints = multi_table_template.format(
+                table_names=table_names_str, display_type=self._generate_numbered_list()
+            )
+            logger.info(f"多表模式：使用多表约束条件，表: {table_names_str}")
+        else:
+            analysis_constraints = _ANALYSIS_CONSTRAINTS_TEMPLATE.format(
+                table_name=self._curr_table, display_type=self._generate_numbered_list()
+            )
+
+        # table_name 使用选中的表名
+        table_name_for_prompt = ", ".join(selected_tables) if is_multi_table else self._curr_table
 
         input_values = {
             "user_input": self.current_user_input.last_text,
-            "table_name": self._curr_table,
+            "table_name": table_name_for_prompt,
             "display_type": self._generate_numbered_list(),
             "table_schema": table_schema,
             "data_example": json.dumps(
@@ -448,12 +563,21 @@ class ChatExcel(BaseChat):
 
     async def _build_model_request(self) -> ModelRequest:
         detected_language = getattr(self, "_detected_language", "zh")
+        
+        # 判断是否为多表模式
+        selected_tables = getattr(self, "_selected_tables", None)
+        if not selected_tables:
+            if getattr(self, "_is_multi_table_mode", False) and hasattr(self, "_all_table_names"):
+                selected_tables = self._all_table_names
+            else:
+                selected_tables = [self._curr_table]
+        is_multi_table = len(selected_tables) > 1
 
         from dbgpt_app.scene.chat_data.chat_excel.excel_analyze.prompt import (
             get_prompt_templates_by_language,
         )
 
-        prompt_templates = get_prompt_templates_by_language(detected_language)
+        prompt_templates = get_prompt_templates_by_language(detected_language, is_multi_table_mode=is_multi_table)
 
         dynamic_prompt = ChatPromptTemplate(
             messages=[
@@ -556,6 +680,258 @@ class ChatExcel(BaseChat):
         except Exception as e:
             logger.error(f"保存领域知识失败: {e}", exc_info=True)
 
+    def _merge_multi_table_schemas(
+        self, all_tables_info: List[Dict], selected_tables: List[str]
+    ) -> str:
+        """
+        合并多个表的 schema 为一个完整的多表 schema JSON
+        
+        Args:
+            all_tables_info: 所有表的信息列表
+            selected_tables: 选中的表名列表
+            
+        Returns:
+            合并后的 schema JSON 字符串
+        """
+        try:
+            merged_schema = {
+                "is_multi_table": True,
+                "table_count": len(selected_tables),
+                "table_names": selected_tables,
+                "tables": [],
+                "columns": [],  # 所有表的列合并（带表名前缀）
+            }
+            
+            table_descriptions = []
+            
+            for table_info in all_tables_info:
+                table_name = table_info.get("table_name")
+                if table_name not in selected_tables:
+                    continue
+                    
+                schema_json = table_info.get("data_schema_json")
+                if not schema_json:
+                    continue
+                    
+                try:
+                    schema_obj = (
+                        json.loads(schema_json)
+                        if isinstance(schema_json, str)
+                        else schema_json
+                    )
+                    
+                    # 添加表信息
+                    table_entry = {
+                        "table_name": table_name,
+                        "table_description": schema_obj.get("table_description", ""),
+                        "row_count": schema_obj.get("row_count", table_info.get("row_count", 0)),
+                        "column_count": schema_obj.get("column_count", table_info.get("column_count", 0)),
+                        "columns": schema_obj.get("columns", []),
+                    }
+                    merged_schema["tables"].append(table_entry)
+                    
+                    # 收集表描述
+                    desc = schema_obj.get("table_description", "")
+                    if desc:
+                        table_descriptions.append(f"- {table_name}: {desc}")
+                    
+                    # 合并列信息（带表名前缀，方便识别）
+                    for col in schema_obj.get("columns", []):
+                        col_with_table = col.copy()
+                        col_with_table["source_table"] = table_name
+                        merged_schema["columns"].append(col_with_table)
+                        
+                except Exception as e:
+                    logger.warning(f"解析表 {table_name} 的 schema 失败: {e}")
+            
+            # 生成合并后的表描述
+            merged_schema["table_description"] = (
+                f"多表联合查询，包含以下 {len(selected_tables)} 个表：\n"
+                + "\n".join(table_descriptions)
+            )
+            
+            return json.dumps(merged_schema, ensure_ascii=False, indent=2)
+            
+        except Exception as e:
+            logger.error(f"合并多表 schema 失败: {e}")
+            # 返回空 schema
+            return json.dumps({"is_multi_table": True, "tables": []}, ensure_ascii=False)
+
+    async def _build_multi_table_info_for_rewrite(
+        self, selected_tables: List[str], all_tables_info: List[Dict]
+    ) -> Dict:
+        """
+        为多表 Query 改写构建表信息
+        不使用复杂的 data_schema_json，而是直接使用建表 SQL 和样本数据
+        
+        Args:
+            selected_tables: 选中的表名列表
+            all_tables_info: 所有表的信息
+            
+        Returns:
+            包含多表信息的字典，格式：
+            {
+                "is_multi_table": True,
+                "table_count": 2,
+                "table_names": ["表1", "表2"],
+                "table_description": "多表描述",
+                "tables": [
+                    {
+                        "table_name": "表1",
+                        "create_table_sql": "CREATE TABLE ...",
+                        "sample_rows": [[...], [...]]
+                    },
+                    ...
+                ],
+                "schema_differences": "字段差异说明"
+            }
+        """
+        result = {
+            "is_multi_table": True,
+            "table_count": len(selected_tables),
+            "table_names": selected_tables,
+            "tables": [],
+        }
+        
+        table_descriptions = []
+        all_columns_by_table = {}  # 记录每个表的字段列表，用于分析差异
+        
+        for table_name in selected_tables:
+            # 从 all_tables_info 中找到对应的表信息
+            table_info = None
+            for info in all_tables_info:
+                if info.get("table_name") == table_name:
+                    table_info = info
+                    break
+            
+            # 获取建表 SQL
+            try:
+                create_sql = await blocking_func_to_async(
+                    self._executor, 
+                    self.excel_reader.get_create_table_sql, 
+                    table_name
+                )
+            except Exception as e:
+                logger.warning(f"获取表 {table_name} 的建表SQL失败: {e}")
+                create_sql = table_info.get("create_table_sql", "") if table_info else ""
+            
+            # 获取样本数据
+            try:
+                cols, rows = await blocking_func_to_async(
+                    self._executor,
+                    self.excel_reader.get_sample_data,
+                    table_name,
+                    2  # 只需要2行样本数据
+                )
+                # 将样本数据转换为列表格式
+                sample_rows = []
+                for row in rows:
+                    sample_rows.append(list(row))
+            except Exception as e:
+                logger.warning(f"获取表 {table_name} 的样本数据失败: {e}")
+                cols, sample_rows = [], []
+            
+            # 记录字段列表
+            all_columns_by_table[table_name] = set(cols) if cols else set()
+            
+            # 获取表描述
+            table_desc = ""
+            if table_info and table_info.get("data_schema_json"):
+                try:
+                    schema_obj = json.loads(table_info["data_schema_json"]) if isinstance(
+                        table_info["data_schema_json"], str
+                    ) else table_info["data_schema_json"]
+                    table_desc = schema_obj.get("table_description", "")
+                except Exception:
+                    pass
+            
+            table_entry = {
+                "table_name": table_name,
+                "table_description": table_desc,
+                "create_table_sql": create_sql,
+                "columns": list(cols) if cols else [],
+                "sample_rows": sample_rows,
+                "row_count": table_info.get("row_count", 0) if table_info else 0,
+                "column_count": table_info.get("column_count", 0) if table_info else 0,
+            }
+            result["tables"].append(table_entry)
+            
+            if table_desc:
+                table_descriptions.append(f"- {table_name}: {table_desc}")
+        
+        # 分析字段差异
+        schema_diff_warning = self._analyze_schema_differences(all_columns_by_table, selected_tables)
+        if schema_diff_warning:
+            result["schema_differences"] = schema_diff_warning
+            logger.warning(f"多表字段差异: {schema_diff_warning}")
+        
+        # 生成合并后的表描述
+        result["table_description"] = (
+            f"多表联合查询，包含以下 {len(selected_tables)} 个表：\n"
+            + "\n".join(table_descriptions)
+        )
+        
+        return result
+    
+    def _analyze_schema_differences(
+        self, all_columns_by_table: Dict[str, set], table_names: List[str]
+    ) -> str:
+        """
+        分析多个表之间的字段差异
+        
+        Args:
+            all_columns_by_table: 每个表的字段集合
+            table_names: 表名列表
+            
+        Returns:
+            字段差异说明（如果有差异）
+        """
+        if len(table_names) < 2:
+            return ""
+        
+        # 找出所有表的字段并集和交集
+        all_columns = set()
+        for cols in all_columns_by_table.values():
+            all_columns.update(cols)
+        
+        common_columns = set(all_columns_by_table[table_names[0]])
+        for table_name in table_names[1:]:
+            common_columns &= all_columns_by_table[table_name]
+        
+        # 如果所有字段都相同，无需警告
+        if len(common_columns) == len(all_columns):
+            return ""
+        
+        # 找出每个表独有的字段
+        unique_columns_by_table = {}
+        for table_name in table_names:
+            table_cols = all_columns_by_table[table_name]
+            unique_cols = table_cols - common_columns
+            if unique_cols:
+                unique_columns_by_table[table_name] = unique_cols
+        
+        # 构建差异说明
+        if not unique_columns_by_table:
+            return ""
+        
+        diff_parts = [
+            "⚠️ 重要提示：这些表的字段结构不完全相同！",
+            f"共同字段数量：{len(common_columns)}",
+            "\n各表独有的字段："
+        ]
+        
+        for table_name, unique_cols in unique_columns_by_table.items():
+            cols_str = ", ".join(list(unique_cols)[:])
+                
+            diff_parts.append(f"- {table_name}: {cols_str}")
+        
+        diff_parts.append("\n在编写SQL时，请注意：")
+        diff_parts.append("1. 使用UNION时，确保SELECT的字段在所有表中都存在")
+        diff_parts.append("2. 如果某个字段只存在于部分表，可以使用NULL或默认值填充")
+        diff_parts.append("3. 或者分别查询各表，然后在应用层合并结果")
+        
+        return "\n".join(diff_parts)
+
     def _clean_history_content(self, content: str) -> str:
         import re
 
@@ -619,6 +995,23 @@ class ChatExcel(BaseChat):
             col_name = col.get("column_name", "")
             usage = col.get("usage", "")
             formatted.append(f"  • {col_name}: {usage}")
+
+        return "\n".join(formatted)
+
+    def _format_relevant_columns_with_table(self, columns: List[Dict]) -> str:
+        """格式化相关列信息（包含表名）"""
+        if not columns:
+            return "未指定"
+
+        formatted = []
+        for col in columns:
+            table_name = col.get("table_name", "")
+            col_name = col.get("column_name", "")
+            usage = col.get("usage", "")
+            if table_name:
+                formatted.append(f"  • {table_name}.{col_name}: {usage}")
+            else:
+                formatted.append(f"  • {col_name}: {usage}")
 
         return "\n".join(formatted)
 
@@ -691,6 +1084,214 @@ class ChatExcel(BaseChat):
             formatted_parts.append(col_text)
 
         return "\n\n".join(formatted_parts)
+
+    async def _build_relevant_columns_info_with_table(
+        self, 
+        relevant_columns: List[Dict], 
+        select_param_dict: Dict,
+        selected_tables: List[str]
+    ) -> str:
+        """
+        构建包含表名的重点关注字段信息
+        
+        Args:
+            relevant_columns: Query 改写返回的相关字段列表
+            select_param_dict: select_param 字典
+            selected_tables: 选中的表列表
+        
+        Returns:
+            格式化后的重点关注字段信息
+        """
+        if not relevant_columns:
+            return ""
+        
+        detected_language = getattr(self, "_detected_language", "zh")
+        is_english = detected_language == "en"
+        
+        # 获取所有表的 schema 信息
+        all_tables_info = select_param_dict.get("all_tables_info", [])
+        
+        # 构建表名到 schema 的映射
+        table_schema_map = {}
+        for table_info in all_tables_info:
+            tbl_name = table_info.get("table_name", "")
+            if tbl_name in selected_tables:
+                schema_json = table_info.get("data_schema_json")
+                if schema_json:
+                    try:
+                        schema_obj = json.loads(schema_json) if isinstance(schema_json, str) else schema_json
+                        table_schema_map[tbl_name] = schema_obj.get("columns", [])
+                    except Exception:
+                        pass
+        
+        # 如果没有多表信息，尝试从单表 data_schema_json 获取
+        if not table_schema_map:
+            data_schema_json = select_param_dict.get("data_schema_json")
+            if data_schema_json:
+                try:
+                    schema_obj = json.loads(data_schema_json) if isinstance(data_schema_json, str) else data_schema_json
+                    table_schema_map[self._curr_table] = schema_obj.get("columns", [])
+                except Exception:
+                    pass
+        
+        header = "Key fields to focus on:" if is_english else "你应该重点关注的字段为："
+        formatted_parts = [header]
+        
+        for col in relevant_columns:
+            table_name = col.get("table_name", "")
+            col_name = col.get("column_name", "")
+            usage = col.get("usage", "")
+            
+            # 查找列的详细信息
+            col_details = None
+            if table_name and table_name in table_schema_map:
+                for col_info in table_schema_map[table_name]:
+                    if col_info.get("column_name") == col_name:
+                        col_details = col_info
+                        break
+            else:
+                # 如果没有指定表名，在所有表中查找
+                for tbl_cols in table_schema_map.values():
+                    for col_info in tbl_cols:
+                        if col_info.get("column_name") == col_name:
+                            col_details = col_info
+                            break
+                    if col_details:
+                        break
+            
+            # 格式化列信息
+            if table_name:
+                col_text = f"  • {table_name}.{col_name}"
+            else:
+                col_text = f"  • {col_name}"
+            
+            if col_details:
+                data_type = col_details.get("data_type", "")
+                description = col_details.get("description", "")
+                
+                if data_type:
+                    label = "Data type" if is_english else "数据类型"
+                    col_text += f"\n    {label}: {data_type}"
+                if description:
+                    label = "Description" if is_english else "描述"
+                    col_text += f"\n    {label}: {description}"
+                
+                if "statistics_summary" in col_details:
+                    label = "Statistics" if is_english else "统计信息"
+                    col_text += f"\n    {label}: {col_details['statistics_summary']}"
+                
+                if "unique_values_top20" in col_details:
+                    unique_vals = col_details["unique_values_top20"]
+                    label = "Possible values" if is_english else "可选值"
+                    if len(unique_vals) <= 10:
+                        col_text += f"\n    {label}: {', '.join(map(str, unique_vals))}"
+                    else:
+                        partial_vals = ", ".join(map(str, unique_vals[:10]))
+                        col_text += f"\n    {label}(部分): {partial_vals}..."
+            else:
+                # 如果没有详细信息，至少显示用途
+                if usage:
+                    label = "Usage" if is_english else "用途"
+                    col_text += f"\n    {label}: {usage}"
+            
+            formatted_parts.append(col_text)
+        
+        return "\n\n".join(formatted_parts)
+
+    def _build_multi_table_schema_info_for_summary(
+        self, 
+        selected_tables: List[str], 
+        all_tables_info: List[Dict],
+        is_english: bool = False
+    ) -> str:
+        """
+        为总结生成多表的 schema 信息
+        
+        Args:
+            selected_tables: 选中的表名列表
+            all_tables_info: 所有表的信息
+            is_english: 是否使用英文
+            
+        Returns:
+            格式化后的多表 schema 信息
+        """
+        tables_info_parts = []
+        
+        for table_name in selected_tables:
+            # 从 all_tables_info 中找到对应的表信息
+            table_info = None
+            for info in all_tables_info:
+                if info.get("table_name") == table_name:
+                    table_info = info
+                    break
+            
+            if not table_info:
+                continue
+            
+            # 获取表的 schema
+            schema_json = table_info.get("data_schema_json")
+            if not schema_json:
+                continue
+            
+            try:
+                schema_obj = (
+                    json.loads(schema_json)
+                    if isinstance(schema_json, str)
+                    else schema_json
+                )
+                
+                table_description = schema_obj.get("table_description", "")
+                columns_summary = []
+                
+                # 构建列信息
+                for col in schema_obj.get("columns", []):
+                    col_name = col.get("column_name", "")
+                    description = col.get("description", "")
+                    
+                    col_info_text = f"  - {col_name}: {description}"
+                    
+                    # 如果有unique_values_top20，补充显示前5个值
+                    if "unique_values_top20" in col:
+                        unique_vals = col["unique_values_top20"]
+                        if isinstance(unique_vals, list) and len(unique_vals) > 0:
+                            top_5_values = unique_vals[:5]
+                            if is_english:
+                                col_info_text += f" (Example values: {', '.join(map(str, top_5_values))})"
+                            else:
+                                col_info_text += f" (示例值: {', '.join(map(str, top_5_values))})"
+                    
+                    columns_summary.append(col_info_text)
+                
+                # 构建单个表的信息
+                if is_english:
+                    table_info_text = f"""
+### Table: {table_name}
+Description: {table_description}
+Columns:
+{chr(10).join(columns_summary)}
+"""
+                else:
+                    table_info_text = f"""
+### 表: {table_name}
+表描述: {table_description}
+字段:
+{chr(10).join(columns_summary)}
+"""
+                tables_info_parts.append(table_info_text)
+                
+            except Exception as e:
+                logger.warning(f"解析表 {table_name} 的 schema 失败: {e}")
+        
+        if not tables_info_parts:
+            return ""
+        
+        # 组合所有表的信息
+        if is_english:
+            header = f"=== Data Table Information ({len(selected_tables)} tables) ==="
+        else:
+            header = f"=== 数据表信息（共 {len(selected_tables)} 个表）==="
+        
+        return f"{header}\n{''.join(tables_info_parts)}"
 
     def _get_data_time_range(self, table_name: str) -> str:
         try:
@@ -816,6 +1417,18 @@ class ChatExcel(BaseChat):
             tables = self.excel_reader.db.sql("SHOW TABLES").fetchall()
             table_names = [t[0] for t in tables]
 
+            # 多表模式：检查所有表是否都已存在
+            if getattr(self, "_is_multi_table_mode", False) and hasattr(self, "_all_table_names"):
+                all_exist = all(t in table_names for t in self._all_table_names)
+                if all_exist:
+                    logger.info(f"多表模式：所有表都已存在 {self._all_table_names}")
+                    return
+                # 如果有表不存在，记录警告但不抛出错误
+                missing = [t for t in self._all_table_names if t not in table_names]
+                if missing:
+                    logger.warning(f"多表模式：部分表不存在 {missing}，但继续使用已存在的表")
+                return
+
             if self._curr_table in table_names:
                 return
 
@@ -824,17 +1437,39 @@ class ChatExcel(BaseChat):
                 and self.excel_reader.table_name
             ):
                 source_table = self.excel_reader.table_name
-                if source_table in table_names and source_table != self._curr_table:
+                # 处理多表名称（逗号分隔的情况）
+                if "," in source_table:
+                    # 多表模式下，source_table 可能是 "table1, table2, table3"
+                    # 检查这些表是否都存在
+                    source_tables = [t.strip() for t in source_table.split(",")]
+                    existing_sources = [t for t in source_tables if t in table_names]
+                    if existing_sources:
+                        logger.info(f"多表模式：找到已存在的表 {existing_sources}")
+                        # 设置 _curr_table 为第一个存在的表
+                        self._curr_table = existing_sources[0]
+                        self._all_table_names = existing_sources
+                        self._is_multi_table_mode = len(existing_sources) > 1
+                        return
+                elif source_table in table_names and source_table != self._curr_table:
                     sql = (
-                        f"CREATE TABLE {self._curr_table} "
-                        f"AS SELECT * FROM {source_table};"
+                        f'CREATE TABLE "{self._curr_table}" '
+                        f'AS SELECT * FROM "{source_table}";'
                     )
                     self.excel_reader.db.sql(sql)
                     return
 
             if "temp_table" in table_names:
-                sql = f"CREATE TABLE {self._curr_table} AS SELECT * FROM temp_table;"
+                sql = f'CREATE TABLE "{self._curr_table}" AS SELECT * FROM temp_table;'
                 self.excel_reader.db.sql(sql)
+                return
+
+            # 如果数据库中有任何表，使用第一个表
+            if table_names:
+                first_table = table_names[0]
+                logger.info(f"使用数据库中已存在的第一个表: {first_table}")
+                self._curr_table = first_table
+                self._all_table_names = table_names
+                self._is_multi_table_mode = len(table_names) > 1
                 return
 
             table_name_attr = getattr(self.excel_reader, "table_name", None)
@@ -854,6 +1489,21 @@ class ChatExcel(BaseChat):
                 lambda: self.excel_reader.db.sql("SHOW TABLES").fetchall(),
             )
             table_names = [t[0] for t in tables]
+
+            # 多表模式：检查是否有任何表存在
+            if getattr(self, "_is_multi_table_mode", False) and hasattr(self, "_all_table_names"):
+                existing_tables = [t for t in self._all_table_names if t in table_names]
+                if existing_tables:
+                    # 更新 _curr_table 为第一个存在的表
+                    self._curr_table = existing_tables[0]
+                    logger.info(f"多表模式：使用已存在的表 {existing_tables}")
+                    return
+                # 如果指定的表都不存在，但数据库中有其他表，使用这些表
+                if table_names:
+                    self._all_table_names = table_names
+                    self._curr_table = table_names[0]
+                    logger.info(f"多表模式：使用数据库中的表 {table_names}")
+                    return
 
             if self._curr_table not in table_names:
                 await blocking_func_to_async(
@@ -978,9 +1628,12 @@ class ChatExcel(BaseChat):
         data_schema_json = None
         table_schema = None
         chat_history = []
+        all_tables_info = None  # 多表模式下的所有表信息
         
         if select_param_dict and isinstance(select_param_dict, dict):
             data_schema_json = select_param_dict.get("data_schema_json")
+            all_tables_info = select_param_dict.get("all_tables_info")  # 多表模式
+            
             if data_schema_json:
                 need_rewrite = True
                 # 获取表结构
@@ -1032,6 +1685,92 @@ class ChatExcel(BaseChat):
 
                     chat_history = current_round_messages
 
+        # 多表模式：先进行表选择
+        selected_tables = None
+        if (
+            getattr(self, "_is_multi_table_mode", False) 
+            and all_tables_info 
+            and len(all_tables_info) > 1 
+            and self.llm_client
+        ):
+            try:
+                from dbgpt_app.scene.chat_data.chat_excel.query_rewrite import (
+                    TableSelectionAgent,
+                )
+                
+                table_selection_agent = TableSelectionAgent(self.llm_client, self.llm_model)
+                
+                # 流式表选择
+                selection_result = None
+                async for chunk in table_selection_agent.select_tables_stream(
+                    self.current_user_input.last_text,
+                    all_tables_info,
+                    chat_history,
+                ):
+                    if isinstance(chunk, str):
+                        # 流式输出表选择过程
+                        if text_output:
+                            yield chunk
+                        else:
+                            yield ModelOutput.build(
+                                text=chunk,
+                                error_code=0,
+                                finish_reason="continue"
+                            )
+                    elif isinstance(chunk, dict):
+                        selection_result = chunk
+                        break
+                
+                if selection_result:
+                    selected_tables = selection_result.get("selected_tables", [])
+                    selection_reason = selection_result.get("selection_reason", "")
+                    logger.info(f"表选择完成: {selected_tables}, 理由: {selection_reason}")
+                    
+                    # 保存选中的表列表，供后续流程使用
+                    self._selected_tables = selected_tables
+                    
+                    # 输出表选择结果的思考过程
+                    from dbgpt.vis.tags.vis_thinking import VisThinking
+                    
+                    is_english = detected_language == "en"
+                    if is_english:
+                        thinking_content = f"""### Table Selection Result
+**Selected Tables**: {', '.join(selected_tables)}
+**Reason**: {selection_reason}"""
+                    else:
+                        thinking_content = f"""### 表选择结果
+**选中的表**: {', '.join(selected_tables)}
+**选择理由**: {selection_reason}"""
+                    
+                    vis_thinking_output = VisThinking().sync_display(content=thinking_content)
+                    if text_output:
+                        yield vis_thinking_output
+                    else:
+                        yield ModelOutput.build(
+                            text=vis_thinking_output, error_code=0, finish_reason="continue"
+                        )
+                    
+                    # 更新当前使用的表
+                    if len(selected_tables) == 1:
+                        self._curr_table = selected_tables[0]
+                        # 更新 data_schema_json 为选中表的 schema
+                        for table_info in all_tables_info:
+                            if table_info.get("table_name") == selected_tables[0]:
+                                data_schema_json = table_info.get("data_schema_json")
+                                break
+                    else:
+                        # 多表查询：合并选中表的 schema 为一个完整的多表 schema
+                        self._curr_table = selected_tables[0]  # 设置第一个表为当前表
+                        data_schema_json = self._merge_multi_table_schemas(
+                            all_tables_info, selected_tables
+                        )
+                        logger.info(f"多表模式：已合并 {len(selected_tables)} 个表的 schema")
+                    
+            except Exception as e:
+                logger.warning(f"表选择失败，使用所有表: {e}")
+                import traceback
+                traceback.print_exc()
+
         # 如果需要查询改写，先进行流式改写
         if need_rewrite and self.llm_client:
             try:
@@ -1041,27 +1780,48 @@ class ChatExcel(BaseChat):
 
                 rewrite_agent = QueryRewriteAgent(self.llm_client, self.llm_model)
                 
-                # 获取样本数据用于query改写
-                try:
-                    sample_data = await blocking_func_to_async(
-                        self._executor, 
-                        self.excel_reader.get_sample_data, 
-                        self._curr_table,
-                        2  # 只需要2行样本数据
+                # 多表模式：获取所有选中表的样本数据和建表SQL
+                selected_table_list = getattr(self, "_selected_tables", None)
+                is_multi_table_rewrite = (
+                    selected_table_list 
+                    and len(selected_table_list) > 1 
+                    and all_tables_info
+                )
+                
+                if is_multi_table_rewrite:
+                    # 多表模式：构建包含所有表信息的结构
+                    multi_table_info = await self._build_multi_table_info_for_rewrite(
+                        selected_table_list, all_tables_info
                     )
-                except Exception as e:
-                    logger.warning(f"获取样本数据失败: {e}")
-                    sample_data = None
+                    # 使用多表信息替代单表的 data_schema_json
+                    rewrite_schema = json.dumps(multi_table_info, ensure_ascii=False)
+                    rewrite_table_desc = multi_table_info.get("table_description", "")
+                    rewrite_sample_data = None  # 样本数据已包含在 multi_table_info 中
+                    logger.info(f"多表Query改写：使用 {len(selected_table_list)} 个表的信息")
+                else:
+                    # 单表模式：使用原有逻辑
+                    rewrite_schema = data_schema_json
+                    rewrite_table_desc = table_schema
+                    try:
+                        rewrite_sample_data = await blocking_func_to_async(
+                            self._executor, 
+                            self.excel_reader.get_sample_data, 
+                            self._curr_table,
+                            2  # 只需要2行样本数据
+                        )
+                    except Exception as e:
+                        logger.warning(f"获取样本数据失败: {e}")
+                        rewrite_sample_data = None
                 
                 # 流式输出查询改写结果
                 rewrite_result = None
                 
                 async for chunk in rewrite_agent.rewrite_query_stream(
                     self.current_user_input.last_text,
-                    data_schema_json,
-                    table_schema,
+                    rewrite_schema,
+                    rewrite_table_desc,
                     chat_history,
-                    sample_rows=sample_data,
+                    sample_rows=rewrite_sample_data,
                 ):
                     if isinstance(chunk, str):
                         # 流式输出原始文本（JSON格式）
@@ -1508,6 +2268,72 @@ class ChatExcel(BaseChat):
             
             # 检查数据量是否过大（超过20条记录），如果过大则使用轻量级prompt
             use_lightweight_summary = total_result_count > 40
+            
+            # 提前初始化 selected_tables 和 is_multi_table，以便后续使用
+            selected_tables = None
+            is_multi_table = False
+            
+            # 获取 select_param_dict 以确定是否为多表模式
+            select_param_dict = self.select_param
+            if isinstance(self.select_param, str):
+                try:
+                    select_param_dict = json.loads(self.select_param)
+                except Exception:
+                    select_param_dict = {}
+            
+            if isinstance(select_param_dict, dict):
+                # 获取选中的表列表
+                selected_tables = getattr(self, "_selected_tables", None)
+                if not selected_tables:
+                    if getattr(self, "_is_multi_table_mode", False) and hasattr(self, "_all_table_names"):
+                        selected_tables = self._all_table_names
+                    else:
+                        selected_tables = [self._curr_table]
+                
+                is_multi_table = len(selected_tables) > 1
+            else:
+                # 如果 select_param_dict 不是字典，使用默认值
+                selected_tables = [self._curr_table]
+                is_multi_table = False
+            
+            # 构建多表场景的引导信息
+            multi_table_guidance = ""
+            if is_multi_table and selected_tables:
+                table_names_str = "、".join(selected_tables) if not is_english else ", ".join(selected_tables)
+                if is_english:
+                    multi_table_guidance = f"""
+
+**IMPORTANT - Multi-Table Scenario**:
+This data analysis session involves multiple data tables: {table_names_str}.
+
+**Special Requirements for Recommended Questions**:
+- **Questions MUST explicitly specify which table(s) to use**, avoid vague expressions
+- **Good Examples** (explicitly specify tables):
+  * "Who are in {selected_tables[0]}" (specify a specific table)
+  * "Who are all employees" (use "all", "total", "overall" to indicate querying all tables)
+  * "Who has the highest bonus in {selected_tables[0]}" (specify a specific table)
+- **Bad Examples** (no table specified):
+  * "Who are there" (too vague, no table specified)
+  * "Who has the highest bonus" (no table specified, unclear)
+- **Question Distribution**:
+  * Include some questions specific to individual tables (explicitly mention table names)
+  * Include some questions involving "all" or "total" tables (use words like "all", "total", "overall")
+
+"""
+                else:
+                    multi_table_guidance = f"""
+
+**重要提示 - 多表场景**：
+当前数据分析会话涉及多个数据表：{table_names_str}。
+
+**推荐问题的特殊要求**：
+- **必须在问题中明确指出要使用哪个表或哪些表**，避免模糊表达
+
+- **推荐问题的分配建议**：
+  * 可以包含几个针对特定表的问题（明确提到表名）
+  * 可以包含几个涉及"所有"或"全部"表的问题（使用"所有"、"全部"、"总共"等词）
+
+"""
 
             history_context = ""
             if self.history_messages and len(self.history_messages) > 0:
@@ -1595,78 +2421,96 @@ class ChatExcel(BaseChat):
 
             # 获取数据schema信息，用于生成推荐问题
             data_schema_info = ""
-            select_param_dict = self.select_param
-            if isinstance(self.select_param, str):
-                try:
-                    select_param_dict = json.loads(self.select_param)
-                except Exception:
-                    select_param_dict = {}
+            # select_param_dict 已在前面获取，这里直接使用
             
             if isinstance(select_param_dict, dict):
-                data_schema_json = select_param_dict.get("data_schema_json")
-                if data_schema_json:
-                    try:
-                        schema_obj = (
-                            json.loads(data_schema_json)
-                            if isinstance(data_schema_json, str)
-                            else data_schema_json
-                        )
-                        table_description = schema_obj.get("table_description", "")
-                        columns_summary = []
-                        # 包含所有列，不限制数量
-                        for col in schema_obj.get("columns", []):
-                            col_name = col.get("column_name", "")
-                            description = col.get("description", "")
+                # selected_tables 和 is_multi_table 已在前面初始化，这里直接使用
+                all_tables_info = select_param_dict.get("all_tables_info", [])
+                
+                if is_multi_table and all_tables_info:
+                    # 多表模式：构建包含所有选中表的信息
+                    data_schema_info = self._build_multi_table_schema_info_for_summary(
+                        selected_tables, all_tables_info, is_english
+                    )
+                else:
+                    # 单表模式：使用原有逻辑
+                    data_schema_json = select_param_dict.get("data_schema_json")
+                    if data_schema_json:
+                        try:
+                            schema_obj = (
+                                json.loads(data_schema_json)
+                                if isinstance(data_schema_json, str)
+                                else data_schema_json
+                            )
+                            table_description = schema_obj.get("table_description", "")
+                            columns_summary = []
+                            # 包含所有列，不限制数量
+                            for col in schema_obj.get("columns", []):
+                                col_name = col.get("column_name", "")
+                                description = col.get("description", "")
+                                
+                                # 构建列信息文本
+                                col_info_text = f"- {col_name}: {description}"
+                                
+                                # 如果有unique_values_top20，补充显示前5个值
+                                if "unique_values_top20" in col:
+                                    unique_vals = col["unique_values_top20"]
+                                    if isinstance(unique_vals, list) and len(unique_vals) > 0:
+                                        # 取前5个值
+                                        top_5_values = unique_vals[:5]
+                                        if is_english:
+                                            col_info_text += f" (Example values: {', '.join(map(str, top_5_values))})"
+                                        else:
+                                            col_info_text += f" (示例值: {', '.join(map(str, top_5_values))})"
+                                
+                                columns_summary.append(col_info_text)
                             
-                            # 构建列信息文本
-                            col_info_text = f"- {col_name}: {description}"
-                            
-                            # 如果有unique_values_top20，补充显示前5个值
-                            if "unique_values_top20" in col:
-                                unique_vals = col["unique_values_top20"]
-                                if isinstance(unique_vals, list) and len(unique_vals) > 0:
-                                    # 取前5个值
-                                    top_5_values = unique_vals[:5]
-                                    if is_english:
-                                        col_info_text += f" (Example values: {', '.join(map(str, top_5_values))})"
-                                    else:
-                                        col_info_text += f" (示例值: {', '.join(map(str, top_5_values))})"
-                            
-                            columns_summary.append(col_info_text)
-                        
-                        # 根据语言切换标签
-                        if is_english:
-                            data_schema_info = f"""
+                            # 根据语言切换标签
+                            if is_english:
+                                data_schema_info = f"""
 === Data Table Information ===
 Table Description: {table_description}
 All Columns:
 {chr(10).join(columns_summary)}
 """
-                        else:
-                            data_schema_info = f"""
+                            else:
+                                data_schema_info = f"""
 === 数据表信息 ===
 表描述: {table_description}
 所有字段:
 {chr(10).join(columns_summary)}
 """
-                    except Exception as e:
-                        logger.warning(f"解析data_schema_json失败: {e}")
+                        except Exception as e:
+                            logger.warning(f"解析data_schema_json失败: {e}")
 
             if use_lightweight_summary:
                 # 数据量过大时，使用简化的prompt（不传入完整数据，但仍生成推荐问题）
+                # 构建数据来源说明
+                table_source_info = ""
+                if is_multi_table and selected_tables:
+                    table_names_str = ", ".join(selected_tables) if is_english else "、".join(selected_tables)
+                    if is_english:
+                        table_source_info = f"\n**Data Source**: Queried from {len(selected_tables)} tables: {table_names_str}\n"
+                    else:
+                        table_source_info = f"\n**数据来源**：查询了 {len(selected_tables)} 个表的数据：{table_names_str}\n"
+                elif selected_tables and len(selected_tables) == 1:
+                    if is_english:
+                        table_source_info = f"\n**Data Source**: Queried from table: {selected_tables[0]}\n"
+                    else:
+                        table_source_info = f"\n**数据来源**：查询了表 {selected_tables[0]} 的数据\n"
+                
                 if is_english:
                     summary_prompt = f"""User's Question: {self.current_user_input.last_text}
 {sql_results_text}
-{data_schema_info}
-
+{table_source_info}{data_schema_info}{multi_table_guidance}
 Task: Generate:
-1. A brief, natural introduction sentence for the query results
+1. A brief, natural introduction sentence for the query results (MUST mention which table(s) were queried)
 2. 9 follow-up questions based on the data schema
 
 Output Format:
 ```json
 {{
-  "summary": "Brief introduction (under 30 words, no data analysis)",
+  "summary": "Brief introduction mentioning data source (under 40 words, no data analysis)",
   "suggested_questions": [
     "Question 1 (simple)", "Question 2 (simple)", "Question 3 (simple)",
     "Question 4 (simple)", "Question 5 (simple)", "Question 6 (simple)",
@@ -1676,25 +2520,33 @@ Output Format:
 ```
 
 Requirements:
-- Summary: naturally introduce the data results, concise, NO analysis
+- Summary: naturally introduce the data results, MUST clearly state which table(s) were queried, concise, NO analysis
 - Questions: first 6 simple with standard answers, last 3 medium difficulty
 - All questions must be based on actual fields in the data table
+- **If multi-table scenario: Questions MUST explicitly specify which table(s) to use**
 - Must be in ENGLISH
 
 Output JSON only:"""
                 else:
+                    # 构建数据来源说明
+                    table_source_info = ""
+                    if is_multi_table and selected_tables:
+                        table_names_str = "、".join(selected_tables)
+                        table_source_info = f"\n**数据来源**：查询了 {len(selected_tables)} 个表的数据：{table_names_str}\n"
+                    elif selected_tables and len(selected_tables) == 1:
+                        table_source_info = f"\n**数据来源**：查询了表 {selected_tables[0]} 的数据\n"
+                    
                     summary_prompt = f"""用户问题：{self.current_user_input.last_text}
 {sql_results_text}
-{data_schema_info}
-
+{table_source_info}{data_schema_info}{multi_table_guidance}
 任务：生成：
-1. 一句简短、自然的引导语来介绍查询结果
+1. 一句简短、自然的引导语来介绍查询结果（必须说明查询了哪些表）
 2. 9个基于数据表的推荐问题
 
 输出格式：
 ```json
 {{
-  "summary": "简短引导语（不超过30字，不要分析数据）",
+  "summary": "简短引导语，需明确说明数据来源（不超过40字，不要分析数据）",
   "suggested_questions": [
     "问题1（简单）", "问题2（简单）", "问题3（简单）",
     "问题4（简单）", "问题5（简单）", "问题6（简单）",
@@ -1704,18 +2556,27 @@ Output JSON only:"""
 ```
 
 要求：
-- 引导语：自然引出数据结果，简洁，不要分析数据
+- 引导语：自然引出数据结果，必须清楚说明查询了哪些表的数据，简洁，不要分析数据
 - 问题：前6个简单问题有标准答案，后3个中等难度
 - 所有问题必须基于数据表中的实际字段
+- **如果是多表场景：必须在问题中明确指出要使用哪个表或哪些表**
 - 必须使用中文
 
 直接输出JSON："""
             elif is_english:
+                # 构建数据来源说明
+                table_source_info = ""
+                if is_multi_table and selected_tables:
+                    table_names_str = ", ".join(selected_tables)
+                    table_source_info = f"\n**Data Source**: Queried from {len(selected_tables)} tables: {table_names_str}\n"
+                elif selected_tables and len(selected_tables) == 1:
+                    table_source_info = f"\n**Data Source**: Queried from table: {selected_tables[0]}\n"
+                
                 summary_prompt = f"""{history_context}
 === User's Current Question ===
 {self.current_user_input.last_text}
 {sql_results_text}
-{data_schema_info}
+{table_source_info}{data_schema_info}{multi_table_guidance}
 **IMPORTANT - Language Requirement**:
 - The user's question is in ENGLISH
 - You MUST respond in ENGLISH
@@ -1723,14 +2584,14 @@ Output JSON only:"""
 
 **Task**:
 Based on the conversation history, current question, SQL query results, and data schema information above, please generate:
-1. An objective and accurate summary
+1. An objective and accurate summary (MUST mention which table(s) were queried)
 2. 9 follow-up questions that would help users explore the data further based on the current analysis results
 
 **Output Format**:
 Please output a JSON object with the following structure:
 ```json
 {{
-  "summary": "Your objective summary based on SQL logic",
+  "summary": "Your objective summary based on SQL logic, clearly stating which table(s) were queried",
   "suggested_questions": [
     "Question 1 (simple question with standard answer)",
     "Question 2 (simple question with standard answer)",
@@ -1747,6 +2608,7 @@ Please output a JSON object with the following structure:
 
 **Requirements for summary**:
 - Explain the final query result
+- **MUST clearly state which table(s) were queried** (e.g., "Based on data from table X..." or "Queried data from tables X and Y...")
 - **Constraints**:
   * Do NOT speculate, extrapolate, or provide subjective interpretations
 - **Output Requirements**:
@@ -1757,30 +2619,39 @@ Please output a JSON object with the following structure:
 - **First 6 questions**: Simple questions with clear standard answers 
 - **Last 3 questions**: Medium difficulty questions that require some thinking and analysis
 - **IMPORTANT**: All questions MUST be based on actual fields and data in the data table, DO NOT fabricate non-existent fields or data
+- **If multi-table scenario: Questions MUST explicitly specify which table(s) to use**
 - Questions should be based on the current analysis results and conversation context, you can think more broadly, but do not deviate from the topic
 - All questions must be in ENGLISH
 
 Please output the JSON directly, without any other text:"""  # noqa: E501
             else:
+                # 构建数据来源说明
+                table_source_info = ""
+                if is_multi_table and selected_tables:
+                    table_names_str = "、".join(selected_tables)
+                    table_source_info = f"\n**数据来源**：查询了 {len(selected_tables)} 个表的数据：{table_names_str}\n"
+                elif selected_tables and len(selected_tables) == 1:
+                    table_source_info = f"\n**数据来源**：查询了表 {selected_tables[0]} 的数据\n"
+                
                 summary_prompt = f"""{history_context}
 === 用户当前问题 ===
 {self.current_user_input.last_text}
 {sql_results_text}
-{data_schema_info}
+{table_source_info}{data_schema_info}{multi_table_guidance}
 **重要 - 语言要求**：
 - 用户的问题是**中文**
 - 你必须用**中文**回答
 
 **任务**：
 根据上述历史对话、当前问题、SQL查询结果和数据表信息，请生成：
-1. 一段客观、准确的总结
+1. 一段客观、准确的总结（必须说明查询了哪些表）
 2. 9个基于当前分析结果的推荐问题，帮助用户进一步探索数据
 
 **输出格式**：
 请输出一个JSON对象，格式如下：
 ```json
 {{
-  "summary": "基于SQL逻辑的客观总结",
+  "summary": "基于SQL逻辑的客观总结，需明确说明查询了哪些表",
   "suggested_questions": [
     "问题1（简单问题，有标准答案）",
     "问题2（简单问题，有标准答案）",
@@ -1797,6 +2668,7 @@ Please output the JSON directly, without any other text:"""  # noqa: E501
 
 **总结的要求**：
 - 阐述最终查询结果
+- **必须清楚说明查询了哪些表的数据**（例如："根据表X的数据..."或"查询了表X和表Y的数据..."）
 - **约束条件**：
   * 不要进行推测、延伸或主观解读
 - **输出要求**：
@@ -1807,6 +2679,7 @@ Please output the JSON directly, without any other text:"""  # noqa: E501
 - **前6个问题**：简单的问题，有明确的标准答案
 - **后3个问题**：中等难度问题，需要一定的思考和分析
 - **重要**：所有问题必须基于数据表中的实际字段和数据，可以围绕具体的分类值进行分析，不能凭空捏造不存在的字段或数据
+- **如果是多表场景：必须在问题中明确指出要使用哪个表或哪些表**
 - 问题应该基于当前分析结果和对话上下文，可以适当发散思维，但不要偏离主题
 - 所有问题必须使用**中文**
 

@@ -1,4 +1,4 @@
-from typing import Any, Dict, Optional
+from typing import Any, Dict, List, Optional
 
 from dbgpt._private.pydantic import BaseModel, ConfigDict, Field
 
@@ -156,3 +156,37 @@ class ExcelInfoResponse(BaseModel):
     created_at: str = Field(..., description="Created time")
     last_accessed: str = Field(..., description="Last accessed time")
     access_count: int = Field(..., description="Access count")
+
+
+class ExcelTableInfo(BaseModel):
+    """Single table info in multi-table mode"""
+    
+    sheet_name: str = Field(..., description="Sheet name in Excel")
+    table_name: str = Field(..., description="Table name in database")
+    table_hash: str = Field(..., description="Table hash")
+    row_count: int = Field(..., description="Number of rows")
+    column_count: int = Field(..., description="Number of columns")
+    columns_info: list = Field(..., description="Column information")
+    summary_prompt: Optional[str] = Field(None, description="Data understanding prompt")
+    data_schema_json: Optional[str] = Field(None, description="Data schema JSON")
+    create_table_sql: Optional[str] = Field(None, description="CREATE TABLE SQL")
+    preview_data: Optional[Dict[str, Any]] = Field(
+        None, description="Preview data with columns and rows"
+    )
+
+
+class ExcelMultiTableUploadResponse(BaseModel):
+    """Response model for multi-table Excel upload"""
+
+    status: str = Field(..., description="Status: 'cached' or 'imported'")
+    message: str = Field(..., description="Status message")
+    file_hash: str = Field(..., description="File hash of the Excel file")
+    db_name: str = Field(..., description="Database name")
+    db_path: str = Field(..., description="Database file path")
+    tables: List[ExcelTableInfo] = Field(..., description="List of table information")
+    conv_uid: Optional[str] = Field(None, description="Conversation UID")
+    
+    # 用于前端预览的多表数据结构
+    preview_data: Optional[Dict[str, Any]] = Field(
+        None, description="Multi-table preview data for frontend"
+    )

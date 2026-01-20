@@ -126,6 +126,7 @@ export const postChatModeParamsFileLoad = ({
   maxNewTokensValue,
   userName,
   sysCode,
+  multiTableMode,
 }: {
   convUid: string;
   chatMode: string;
@@ -135,10 +136,11 @@ export const postChatModeParamsFileLoad = ({
   maxNewTokensValue?: number;
   userName?: string;
   sysCode?: string;
+  multiTableMode?: boolean;  // 多表模式：每个sheet存为独立的表
   config?: Omit<AxiosRequestConfig, 'headers'>;
 }) => {
   const baseUrl = `/api/v1/resource/file/upload`;
-  const params = {
+  const params: Record<string, any> = {
     conv_uid: convUid,
     chat_mode: chatMode,
     model_name: model,
@@ -147,6 +149,11 @@ export const postChatModeParamsFileLoad = ({
     temperature: temperatureValue,
     max_new_tokens: maxNewTokensValue,
   };
+  
+  // 只有明确指定时才添加 multi_table_mode 参数
+  if (multiTableMode !== undefined) {
+    params.multi_table_mode = multiTableMode;
+  }
 
   const url = buildUrl(baseUrl, params);
   return POST<FormData, any>(url, data, {
@@ -159,6 +166,61 @@ export const postChatModeParamsFileLoad = ({
 
 export const clearChatHistory = (conUid: string) => {
   return POST<null, Record<string, string>>(`/api/v1/chat/dialogue/clear?con_uid=${conUid}`);
+};
+
+// Excel 多表上传（每个sheet存为独立的表）
+export interface ExcelMultiTableUploadResponse {
+  status: string;
+  message: string;
+  file_hash: string;
+  db_name: string;
+  db_path: string;
+  tables: Array<{
+    sheet_name: string;
+    table_name: string;
+    table_hash: string;
+    row_count: number;
+    column_count: number;
+    columns_info: Array<{ name: string; type: string; dtype: string }>;
+    summary_prompt?: string;
+    data_schema_json?: string;
+    create_table_sql?: string;
+    preview_data?: {
+      columns: Array<{ field: string; type: string; headerName: string }>;
+      rows: Array<Record<string, any>>;
+      total: number;
+    };
+  }>;
+  conv_uid?: string;
+  preview_data?: {
+    file_name?: string;
+    tables: Array<{
+      sheet_name: string;
+      table_name: string;
+      columns: Array<{ field: string; type: string; headerName: string }>;
+      rows: Array<Record<string, any>>;
+      total: number;
+      file_name?: string;
+    }>;
+  };
+}
+
+export const postExcelMultiTableUpload = ({
+  data,
+  forceReimport = false,
+  config,
+}: {
+  data: FormData;
+  forceReimport?: boolean;
+  config?: Omit<AxiosRequestConfig, 'headers'>;
+}) => {
+  const url = `/api/v1/serve/datasource/chat-excel/upload-multi-tables?force_reimport=${forceReimport}`;
+  return POST<FormData, { data: ExcelMultiTableUploadResponse }>(url, data, {
+    headers: {
+      'Content-Type': 'multipart/form-data',
+    },
+    ...config,
+  });
 };
 
 export const clearAllCaches = () => {

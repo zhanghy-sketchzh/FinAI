@@ -172,6 +172,89 @@ _ANALYSIS_CONSTRAINTS_ZH = """
 展示顺序：数据摘要 → 图表可视化 → SQL查询
 """
 
+# ===== 多表模式的约束条件块 =====
+_ANALYSIS_CONSTRAINTS_MULTI_TABLE_ZH = """
+**【多表模式】可用的数据表：{table_names}**
+
+**【重要】多表查询策略：**
+1. **UNION ALL 合并查询**（推荐用于结构相似的表）：
+   - 当用户询问"所有"、"全部"、"总共"等需要合并多个表数据时
+   - 使用 UNION ALL 将多个表的数据合并后再进行聚合分析
+   - ⚠️ **关键注意事项**：
+     * 不同表的字段名可能不同，需要使用 AS 统一别名
+     * **如果某个字段只存在于部分表中，对于不存在该字段的表，必须使用 NULL 或 0 填充**
+     * 必须确保 UNION ALL 的每个 SELECT 语句返回相同数量和类型的列
+   - 示例（包含NULL填充）：
+     ```sql
+     SELECT "字段A" AS "统一名", "数值字段" AS "数值" FROM "表1"
+     UNION ALL
+     SELECT "字段B" AS "统一名", NULL AS "数值" FROM "表2"  -- 表2没有"数值字段"，用NULL填充
+     ```
+
+2. **单表查询**：
+   - 如果用户明确指定了某个表或某类数据，只查询对应的表
+   - 根据表名和表描述判断用户想查询哪个表
+
+3. **JOIN 关联查询**：
+   - 当需要关联不同类型的表时
+   - 使用适当的 JOIN 条件连接表
+
+**表名必须使用上面列出的完整表名，不能简化、缩写或修改**
+**字段名必须严格使用建表SQL中的字段名，不能使用不存在的字段**
+
+列名规则：中文/数字开头/特殊字符必须用双引号;时间戳处理使用 to_timestamp() 而非直接 CAST；注释行必须单独成行，不要放在 SQL 语句的同一行
+字符串匹配规则：WHERE子句中的字符串条件必须完全匹配数据中的实际值，不能随意替换字符（如"和"不能替换为"与"），建议使用LIKE或IN操作符基于实际数据值
+**WHERE逻辑规则：混用AND和OR时必须用括号明确优先级，根据用户意图正确组合条件**
+子查询规则：禁止在 SELECT 列表中使用返回多行的子查询（会导致"More than one row returned"错误），应使用 JOIN 或窗口函数替代
+**别名规则：同一SELECT中不能引用本层定义的别名，使用完整表达式或多层CTE；CTE中必须列出所有后续需要的字段**
+数值格式化：所有数值列和聚合结果必须使用 ROUND(column, 2) 保留两位小数
+**LIMIT规则：禁止自动添加LIMIT，除非用户明确要求限制返回行数，否则应展示所有符合条件的数据**
+图表优先：默认使用图表，分类对比用bar/pie，时序用line/area，仅明细记录用table
+可用方式：{display_type}
+展示顺序：数据摘要 → 图表可视化 → SQL查询
+"""
+
+_ANALYSIS_CONSTRAINTS_MULTI_TABLE_EN = """
+**【Multi-Table Mode】Available Tables: {table_names}**
+
+**【IMPORTANT】Multi-Table Query Strategies:**
+1. **UNION ALL Merge Query** (Recommended for similar-structured tables):
+   - When user asks about "all", "total", "overall" data requiring data from multiple tables
+   - Use UNION ALL to merge data from multiple tables before aggregation analysis
+   - ⚠️ **Critical Notes**:
+     * Different tables may have different column names, use AS to unify aliases
+     * **If a field exists only in some tables, you MUST use NULL or 0 to fill in for tables that don't have that field**
+     * Ensure each SELECT in UNION ALL returns the same number and types of columns
+   - Example (with NULL filling):
+     ```sql
+     SELECT "field_a" AS "unified_name", "value_field" AS "value" FROM "table1"
+     UNION ALL
+     SELECT "field_b" AS "unified_name", NULL AS "value" FROM "table2"  -- table2 doesn't have "value_field", use NULL
+     ```
+
+2. **Single Table Query**:
+   - If user explicitly specifies a particular table or data type, only query the corresponding table
+   - Determine which table to query based on table name and description
+
+3. **JOIN Related Query**:
+   - When relating different types of tables
+   - Use appropriate JOIN conditions to connect tables
+
+**Table names MUST use the complete names listed above, cannot simplify, abbreviate, or modify**
+**Column names MUST strictly use the field names from CREATE TABLE SQL, cannot use non-existent fields**
+
+Column rules: Chinese/digit-starting/special chars need double quotes
+String matching rules: String conditions in WHERE clause must exactly match actual values in data
+**WHERE logic rules: Must use parentheses to clarify priority when mixing AND/OR**
+Subquery rules: NEVER use subqueries in SELECT list that return multiple rows
+**Alias rules: Cannot reference aliases within same SELECT, use full expressions or multi-layer CTEs**
+Numeric formatting: All numeric columns and aggregate results must use ROUND(column, 2)
+**LIMIT rules: DO NOT automatically add LIMIT unless user explicitly requests**
+Chart priority: Default to charts, categorical use bar/pie, time-series use line/area
+Available types: {display_type}
+Display order: Data summary → Chart visualization → SQL query
+"""
+
 _ANALYSIS_CONSTRAINTS_EN = """
 **【MUST STRICTLY FOLLOW】Table Name: {table_name}**
 **IMPORTANT: In all SQL FROM clauses, you MUST use the complete table name specified above, cannot simplify, abbreviate, or modify it!**
@@ -198,6 +281,77 @@ FROM data_analysis_table
 WHERE (("部门"=null OR "部门"='') AND  "部门"='C'
 GROUP BY "部门", "年份"
 ORDER BY "部门", "年份";
+</sql></args></api-call>
+
+"""
+
+# ===== 多表模式的示例块 =====
+_EXAMPLES_MULTI_TABLE_ZH = """
+【示例1 - UNION ALL合并查询】（当需要合并多个结构相似的表时使用）：
+user: 所有数据中哪个最大
+assistant: <api-call><name>response_table</name><args><sql>
+-- 使用 UNION ALL 合并多个表的数据，注意字段对齐
+WITH all_data AS (
+  SELECT "字段A" AS "统一字段名", "数值字段" AS "数值" FROM "表1"
+  UNION ALL
+  SELECT "字段B" AS "统一字段名", "数值字段2" AS "数值" FROM "表2"
+)
+SELECT "统一字段名", ROUND("数值", 2) AS "数值"
+FROM all_data
+ORDER BY "数值" DESC
+LIMIT 1;
+</sql></args></api-call>
+
+【示例2 - 单表查询】（当用户明确指定某个表或某类数据时使用）：
+user: 查询表A中的最大值
+assistant: <api-call><name>response_table</name><args><sql>
+SELECT "字段名", ROUND("数值字段", 2) AS "数值"
+FROM "表A"
+ORDER BY "数值字段" DESC
+LIMIT 1;
+</sql></args></api-call>
+
+【示例3 - JOIN关联查询】（当需要关联不同类型的表时使用）：
+user: 查询数据并关联参考表
+assistant: <api-call><name>response_table</name><args><sql>
+SELECT a."主字段", ROUND(a."数值" * b."系数", 2) AS "计算结果"
+FROM "主表" a
+JOIN "参考表" b ON a."关联字段" = b."关联字段";
+</sql></args></api-call>
+
+"""
+
+_EXAMPLES_MULTI_TABLE_EN = """
+【Example 1 - UNION ALL Merge Query】(Use when merging multiple tables with similar structure):
+user: What is the maximum value across all data
+assistant: <api-call><name>response_table</name><args><sql>
+-- Use UNION ALL to merge data from multiple tables, ensure field alignment
+WITH all_data AS (
+  SELECT "field_a" AS "unified_field", "value_field" AS "value" FROM "table1"
+  UNION ALL
+  SELECT "field_b" AS "unified_field", "value_field2" AS "value" FROM "table2"
+)
+SELECT "unified_field", ROUND("value", 2) AS "value"
+FROM all_data
+ORDER BY "value" DESC
+LIMIT 1;
+</sql></args></api-call>
+
+【Example 2 - Single Table Query】(Use when user explicitly specifies a table or data type):
+user: Query the maximum value in table A
+assistant: <api-call><name>response_table</name><args><sql>
+SELECT "field_name", ROUND("value_field", 2) AS "value"
+FROM "table_a"
+ORDER BY "value_field" DESC
+LIMIT 1;
+</sql></args></api-call>
+
+【Example 3 - JOIN Related Query】(Use when relating different types of tables):
+user: Query data and join with reference table
+assistant: <api-call><name>response_table</name><args><sql>
+SELECT a."main_field", ROUND(a."value" * b."coefficient", 2) AS "calculated_result"
+FROM "main_table" a
+JOIN "reference_table" b ON a."join_field" = b."join_field";
 </sql></args></api-call>
 
 """
@@ -293,25 +447,38 @@ _USER_PROMPT_TEMPLATE = (
 
 
 # ===== 动态语言选择工厂函数 =====
-def get_prompt_templates_by_language(language: str = "zh"):
+def get_prompt_templates_by_language(language: str = "zh", is_multi_table_mode: bool = False):
     """
     根据指定语言返回对应的 prompt 模板
 
     Args:
         language: "zh" 或 "en"
+        is_multi_table_mode: 是否为多表模式
 
     Returns:
         包含所有模板的字典
     """
     is_english = language == "en"
 
+    # 根据是否多表模式选择约束条件和示例
+    if is_multi_table_mode:
+        analysis_constraints = (
+            _ANALYSIS_CONSTRAINTS_MULTI_TABLE_EN if is_english else _ANALYSIS_CONSTRAINTS_MULTI_TABLE_ZH
+        )
+        examples = (
+            _EXAMPLES_MULTI_TABLE_EN if is_english else _EXAMPLES_MULTI_TABLE_ZH
+        )
+    else:
+        analysis_constraints = (
+            _ANALYSIS_CONSTRAINTS_EN if is_english else _ANALYSIS_CONSTRAINTS_ZH
+        )
+        examples = _EXAMPLES_EN if is_english else _EXAMPLES_ZH
+
     return {
         "system_prompt": _SYSTEM_PROMPT_EN if is_english else _SYSTEM_PROMPT_ZH,
         "duckdb_rules": _DUCKDB_RULES_EN if is_english else _DUCKDB_RULES_ZH,
-        "analysis_constraints": (
-            _ANALYSIS_CONSTRAINTS_EN if is_english else _ANALYSIS_CONSTRAINTS_ZH
-        ),
-        "examples": _EXAMPLES_EN if is_english else _EXAMPLES_ZH,
+        "analysis_constraints": analysis_constraints,
+        "examples": examples,
         "user_prompt_template": (
             _USER_PROMPT_TEMPLATE_EN if is_english else _USER_PROMPT_TEMPLATE_ZH
         ),

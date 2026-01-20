@@ -23,13 +23,24 @@ const ChatContainer = dynamic(() => import('@/components/chat/chat-container'), 
 
 const { Content } = Layout;
 
-// Excel预览数据类型
-interface ExcelPreviewData {
+// 单个表的预览数据类型
+interface SingleTablePreviewData {
   columns: Array<{ field: string; type: string; headerName: string }>;
   rows: Array<Record<string, any>>;
   total: number;
   file_name?: string;
+  sheet_name?: string;
+  table_name?: string;
 }
+
+// 多表预览数据类型
+interface MultiTablePreviewData {
+  file_name?: string;
+  tables: Array<SingleTablePreviewData & { sheet_name: string; table_name: string }>;
+}
+
+// Excel预览数据类型（支持单表和多表）
+type ExcelPreviewData = SingleTablePreviewData | MultiTablePreviewData;
 
 interface ChatContentProps {
   history: ChatHistoryResponse; // 会话记录列表

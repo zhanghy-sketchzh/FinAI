@@ -1,17 +1,20 @@
 [system]
 # Load language from environment variable(It is set by the hook)
-language = "${env:DBGPT_LANG:-en}"
+language = "${env:DBGPT_LANG:-zh}"
 api_keys = []
 encrypt_key = "your_secret_key"
 
 # Server Configurations
 [service.web]
 host = "0.0.0.0"
-port = 5670
+port = 1234
 
 [service.web.database]
 type = "sqlite"
 path = "pilot/meta_data/dbgpt.db"
+[service.model.worker]
+host = "127.0.0.1"
+worker_register_host = "127.0.0.1"
 
 [rag.storage]
 [rag.storage.vector]
@@ -21,13 +24,18 @@ persist_path = "pilot/data"
 # Model Configurations
 [models]
 [[models.llms]]
-name = "qwen3-coder:30b-a3b-fp16"
-provider = "proxy/ollama"
-api_base = "http://localhost:11434"
-api_key = ""
+name = "Qwen/Qwen3-Coder-30B-A3B-Instruct"
+provider = "proxy/siliconflow"
+api_key = "sk-knrjwaimdemmawhqyjntgztumpusjmkotbsczdxllgmroltg"
+
 
 [[models.embeddings]]
-name = "bge-m3:latest"
-provider = "proxy/ollama"
-api_url = "http://localhost:11434"
-api_key = ""
+name = "BAAI/bge-large-zh-v1.5"
+provider = "proxy/openai"
+api_url = "https://api.siliconflow.cn/v1/embeddings"
+api_key = "sk-knrjwaimdemmawhqyjntgztumpusjmkotbsczdxllgmroltg"
+
+[[models.rerankers]]
+name = "BAAI/bge-reranker-v2-m3"
+provider = "proxy/siliconflow"
+api_key = "sk-knrjwaimdemmawhqyjntgztumpusjmkotbsczdxllgmroltg"
