@@ -2171,6 +2171,89 @@ Columns:
                 error_msg = "我主要负责数据分析，您有什么关于数据的问题吗？"
             yield error_msg
     
+    def _calculate_result_statistics(self, result_data: list, is_english: bool = False) -> str:
+        """
+        计算查询结果的统计信息，特别是数值字段的总和、平均值等
+        
+        Args:
+            result_data: 查询结果数据列表
+            is_english: 是否使用英文
+            
+        Returns:
+            格式化的统计信息字符串
+        """
+        try:
+            if not result_data or not isinstance(result_data, list) or len(result_data) == 0:
+                return ""
+            
+            # 识别数值字段（通过字段名或值的类型判断）
+            numeric_fields = {}
+            sample_row = result_data[0] if result_data else {}
+            
+            for field_name, field_value in sample_row.items():
+                # 判断字段是否为数值类型
+                if isinstance(field_value, (int, float)):
+                    numeric_fields[field_name] = {
+                        'sum': 0,
+                        'count': 0,
+                        'min': float('inf'),
+                        'max': float('-inf'),
+                        'values': []
+                    }
+            
+            # 如果没有数值字段，返回空
+            if not numeric_fields:
+                return ""
+            
+            # 遍历所有数据行，计算统计值
+            for row in result_data:
+                for field_name in numeric_fields.keys():
+                    value = row.get(field_name)
+                    if value is not None and isinstance(value, (int, float)):
+                        numeric_fields[field_name]['sum'] += value
+                        numeric_fields[field_name]['count'] += 1
+                        numeric_fields[field_name]['min'] = min(numeric_fields[field_name]['min'], value)
+                        numeric_fields[field_name]['max'] = max(numeric_fields[field_name]['max'], value)
+                        numeric_fields[field_name]['values'].append(value)
+            
+            # 构建统计信息文本
+            stats_parts = []
+            
+            if is_english:
+                stats_parts.append("**Statistical Summary** (Pre-calculated, use these exact numbers):")
+            else:
+                stats_parts.append("**统计汇总**（已为你计算好，请直接使用这些数值）：")
+            
+            for field_name, stats in numeric_fields.items():
+                if stats['count'] == 0:
+                    continue
+                
+                avg_value = stats['sum'] / stats['count'] if stats['count'] > 0 else 0
+                
+                if is_english:
+                    field_stats = f"  - {field_name}:"
+                    field_stats += f"\n    * Total: {stats['sum']}"
+                    field_stats += f"\n    * Average: {avg_value:.2f}"
+                    field_stats += f"\n    * Min: {stats['min']}, Max: {stats['max']}"
+                    field_stats += f"\n    * Record Count: {stats['count']}"
+                else:
+                    field_stats = f"  - {field_name}："
+                    field_stats += f"\n    * 总计：{stats['sum']}"
+                    field_stats += f"\n    * 平均值：{avg_value:.2f}"
+                    field_stats += f"\n    * 最小值：{stats['min']}，最大值：{stats['max']}"
+                    field_stats += f"\n    * 记录条数：{stats['count']}"
+                
+                stats_parts.append(field_stats)
+            
+            if len(stats_parts) <= 1:
+                return ""
+            
+            return "\n".join(stats_parts) + "\n"
+            
+        except Exception as e:
+            logger.warning(f"计算结果统计信息失败: {e}")
+            return ""
+    
     def _format_query_rewrite_thinking(self, rewrite_result: dict) -> str:
         try:
             if not rewrite_result:
@@ -2386,6 +2469,9 @@ This data analysis session involves multiple data tables: {table_names_str}.
                     result_data = sql_result["result"]
                     result_count = len(result_data) if isinstance(result_data, list) else 0
                     
+                    # 计算统计信息（数值字段的总和、平均值等）
+                    stats_info = self._calculate_result_statistics(result_data, is_english)
+                    
                     if use_lightweight_summary:
                         # 数据量过大时，只传入摘要信息
                         if result_count > 0:
@@ -2397,6 +2483,10 @@ This data analysis session involves multiple data tables: {table_names_str}.
                             else:
                                 sql_results_text += f"查询结果：返回 {result_count} 条记录\n"
                                 sql_results_text += f"包含字段：{', '.join(field_names)}\n"
+                            
+                            # 添加统计信息
+                            if stats_info:
+                                sql_results_text += stats_info
                         else:
                             if is_english:
                                 sql_results_text += "Query Result: No records found (empty result set)\n"
@@ -2407,6 +2497,10 @@ This data analysis session involves multiple data tables: {table_names_str}.
                         result_label = f"Query Result {i}" if is_english else f"查询结果 {i}"
                         result_json = json.dumps(result_data, ensure_ascii=False, indent=2)
                         sql_results_text += f"{result_label}：\n{result_json}\n"
+                        
+                        # 添加统计信息
+                        if stats_info:
+                            sql_results_text += f"\n{stats_info}\n"
                         
                         if not result_data:
                             if is_english:
@@ -2609,6 +2703,11 @@ Please output a JSON object with the following structure:
 **Requirements for summary**:
 - Explain the final query result
 - **MUST clearly state which table(s) were queried** (e.g., "Based on data from table X..." or "Queried data from tables X and Y...")
+- **IMPORTANT - Use Pre-calculated Statistics**:
+  * If "Statistical Summary" is provided above, you MUST use those exact numbers directly
+  * DO NOT calculate totals, averages, or any statistics yourself
+  * DO NOT add up numbers from individual records - use the provided totals
+  * The statistical values have been pre-calculated for accuracy
 - **Constraints**:
   * Do NOT speculate, extrapolate, or provide subjective interpretations
 - **Output Requirements**:
@@ -2669,6 +2768,11 @@ Please output the JSON directly, without any other text:"""  # noqa: E501
 **总结的要求**：
 - 阐述最终查询结果
 - **必须清楚说明查询了哪些表的数据**（例如："根据表X的数据..."或"查询了表X和表Y的数据..."）
+- **重要 - 使用预计算的统计值**：
+  * 如果上面提供了"统计汇总"，你必须直接使用这些准确的数值
+  * 不要自己计算总数、平均值或任何统计值
+  * 不要把各条记录的数字相加 - 直接使用提供的总计值
+  * 这些统计值已经预先计算好，确保准确性
 - **约束条件**：
   * 不要进行推测、延伸或主观解读
 - **输出要求**：
