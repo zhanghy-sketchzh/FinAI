@@ -2222,7 +2222,7 @@ Columns:
             if is_english:
                 stats_parts.append("**Statistical Summary** (Pre-calculated, use these exact numbers):")
             else:
-                stats_parts.append("**统计汇总**（已为你计算好，请直接使用这些数值）：")
+                stats_parts.append("**统计汇总**（已为你计算好，如有需要,请直接使用这些数值）：")
             
             for field_name, stats in numeric_fields.items():
                 if stats['count'] == 0:
