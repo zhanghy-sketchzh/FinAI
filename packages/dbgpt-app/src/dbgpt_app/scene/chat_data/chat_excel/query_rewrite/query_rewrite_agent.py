@@ -75,6 +75,88 @@ class QueryRewriteAgent:
         """
         self.llm_client = llm_client
         self.model_name = model_name
+    
+    def _calculate_edit_distance(self, s1: str, s2: str) -> int:
+        """
+        计算两个字符串之间的编辑距离（Levenshtein距离）
+        
+        Args:
+            s1: 字符串1
+            s2: 字符串2
+            
+        Returns:
+            编辑距离
+        """
+        if len(s1) < len(s2):
+            return self._calculate_edit_distance(s2, s1)
+        
+        if len(s2) == 0:
+            return len(s1)
+        
+        previous_row = range(len(s2) + 1)
+        for i, c1 in enumerate(s1):
+            current_row = [i + 1]
+            for j, c2 in enumerate(s2):
+                # j+1 代替 j，因为 previous_row 和 current_row 的索引比 s2 多1
+                insertions = previous_row[j + 1] + 1
+                deletions = current_row[j] + 1
+                substitutions = previous_row[j] + (c1 != c2)
+                current_row.append(min(insertions, deletions, substitutions))
+            previous_row = current_row
+        
+        return previous_row[-1]
+    
+    def _find_similar_columns(
+        self, 
+        invalid_column: str, 
+        valid_columns: Dict[str, set], 
+        table_name: str = None,
+        top_k: int = 3
+    ) -> List[Dict]:
+        """
+        为无效字段找到最相似的有效字段
+        
+        Args:
+            invalid_column: 无效的字段名
+            valid_columns: 有效字段字典 {table_name: set(column_names)}
+            table_name: 指定的表名（如果有）
+            top_k: 返回前k个最相似的字段
+            
+        Returns:
+            相似字段列表，每个元素包含 {table_name, column_name, distance, similarity}
+        """
+        similar_columns = []
+        
+        # 如果指定了表名，只在该表中查找
+        if table_name and table_name in valid_columns:
+            search_tables = {table_name: valid_columns[table_name]}
+        else:
+            search_tables = valid_columns
+        
+        for tbl_name, columns in search_tables.items():
+            for col_name in columns:
+                # 计算编辑距离
+                distance = self._calculate_edit_distance(
+                    invalid_column.lower(), 
+                    col_name.lower()
+                )
+                
+                # 计算相似度（0-1之间，1表示完全相同）
+                max_len = max(len(invalid_column), len(col_name))
+                similarity = 1 - (distance / max_len) if max_len > 0 else 0
+                
+                similar_columns.append({
+                    "table_name": tbl_name,
+                    "column_name": col_name,
+                    "distance": distance,
+                    "similarity": similarity
+                })
+        
+        # 按相似度排序（从高到低）
+        similar_columns.sort(key=lambda x: (-x["similarity"], x["distance"]))
+        
+        # 返回前k个
+        return similar_columns[:top_k]
 
     def _extract_valid_column_names(self, table_schema_json: str) -> Union[set, Dict[str, set]]:
         """
@@ -807,18 +889,18 @@ class QueryRewriteAgent:
 {{
   "is_relevant": true,
   "rewritten_query": "改写后的完整问题，明确指出需要分析的维度和指标",
-  "relevant_columns": [
-    {{
-      "column_name": "列名",
-      "usage": "用途说明（如：筛选条件/分组维度/聚合指标）"
-    }}
-  ],
   "analysis_suggestions": [
     "建议1：具体的分析步骤或注意事项",
     "建议2：...",
     "建议3：..."
   ],
   "analysis_logic": "分析逻辑的详细说明",
+  "relevant_columns": [
+    {{
+      "column_name": "列名",
+      "usage": "用途说明（如：筛选条件/分组维度/聚合指标）"
+    }}
+  ],
   "domain_knowledge": null
 }}
 
@@ -872,12 +954,6 @@ class QueryRewriteAgent:
 {{
   "is_relevant": true,
   "rewritten_query": "改写后的完整问题，明确指出需要从哪些表查询、分析的维度和指标",
-  "relevant_columns": [
-    {{
-      "table_name": "表名（多表时必须指定）",
-      "column_name": "列名（必须与建表SQL中的列名完全一致）",
-      "usage": "用途说明（如：筛选条件/分组维度/聚合指标）"
-    }}
   ],
   "analysis_suggestions": [
     "建议1：说明如何联合多个表进行查询",
@@ -886,6 +962,12 @@ class QueryRewriteAgent:
     "建议4：..."
   ],
   "analysis_logic": "多表分析逻辑的详细说明，包括：1) 使用哪些表 2) 如何联合（UNION/JOIN）3) 筛选条件 4) 分组维度 5) 聚合指标",
+  "relevant_columns": [
+    {{
+      "table_name": "表名（多表时必须指定）",
+      "column_name": "列名（必须与建表SQL中的列名完全一致）",
+      "usage": "用途说明（如：筛选条件/分组维度/聚合指标）"
+    }}
   "multi_table_strategy": {{
     "strategy": "UNION_ALL 或 JOIN 或 SINGLE_TABLE",
     "tables_to_use": ["表名1", "表名2"],
@@ -1101,26 +1183,88 @@ Now please analyze the user's real intent, consider multi-table query approach, 
         
         # 如果有无效字段提示，追加到prompt中（根据语言选择）
         if invalid_columns_hint:
+            # 解析无效字段列表并找相似字段
+            similar_suggestions = []
+            import re
+            
+            # 处理不同格式的invalid_columns_hint
+            if isinstance(invalid_columns_hint, list):
+                invalid_fields = invalid_columns_hint
+            elif isinstance(invalid_columns_hint, str):
+                # 从字符串中提取字段名（格式：['字段1', '字段2']）
+                invalid_fields = re.findall(r"'([^']+)'", invalid_columns_hint)
+            else:
+                invalid_fields = []
+            
+            if invalid_fields:
+                for invalid_field in invalid_fields:
+                    # 提取表名和字段名
+                    table_match = re.search(r'\(字段不存在于表\s*[\'"]?([^\'"）]+)[\'"]?\s*中\)', invalid_field)
+                    if table_match:
+                        specified_table = table_match.group(1)
+                        # 去掉表名后缀，获取纯字段名
+                        pure_field = re.sub(r'\s*\(字段不存在于表.*\)', '', invalid_field)
+                    else:
+                        specified_table = None
+                        pure_field = invalid_field
+                    
+                    # 查找相似字段
+                    similar_cols = self._find_similar_columns(
+                        pure_field, 
+                        valid_column_names,
+                        specified_table,
+                        top_k=3
+                    )
+                    
+                    if similar_cols:
+                        # 过滤相似度>0.6的字段
+                        good_matches = [c for c in similar_cols if c['similarity'] > 0.6]
+                        if good_matches:
+                            if user_language == "zh":
+                                suggestion = f"  • 无效字段：{invalid_field}\n    相似字段推荐："
+                                for match in good_matches:
+                                    suggestion += f"\n      - {match['table_name']}.{match['column_name']} (相似度: {match['similarity']:.2f})"
+                            else:
+                                suggestion = f"  • Invalid field: {invalid_field}\n    Similar field suggestions:"
+                                for match in good_matches:
+                                    suggestion += f"\n      - {match['table_name']}.{match['column_name']} (similarity: {match['similarity']:.2f})"
+                            similar_suggestions.append(suggestion)
+            
+            # 将invalid_columns_hint转换为显示格式
+            if isinstance(invalid_columns_hint, list):
+                invalid_columns_display = str(invalid_columns_hint)
+            else:
+                invalid_columns_display = invalid_columns_hint
+            
             if user_language == "zh":
                 correction_hint = f"""
 
 **错误纠正**：
 你上次返回的以下字段名在数据表中不存在，请勿使用：
-{invalid_columns_hint}
-
-请仔细检查上面提供的字段列表，只使用实际存在的字段名重新生成。如果找不到对应的字段，请在analysis_suggestions中说明该分析可能无法完成。
+{invalid_columns_display}
 """
+                if similar_suggestions:
+                    correction_hint += "\n**相似字段推荐**（基于编辑距离算法）：\n"
+                    correction_hint += "\n".join(similar_suggestions)
+                    correction_hint += "\n\n请参考上面推荐的相似字段，或从字段列表中选择其他合适的字段。"
+                else:
+                    correction_hint += "\n请仔细检查上面提供的字段列表，只使用实际存在的字段名重新生成。如果找不到对应的字段，请在analysis_suggestions中说明该分析可能无法完成。"
             else:
                 correction_hint = f"""
 
 **Error Correction**:
 The following column names you returned do not exist in the data table, DO NOT use them:
-{invalid_columns_hint}
-
-Please carefully check the field list provided above and regenerate using only column names that actually exist. If you cannot find the corresponding field, please explain in analysis_suggestions that this analysis may not be possible.
+{invalid_columns_display}
 """
+                if similar_suggestions:
+                    correction_hint += "\n**Similar Field Suggestions** (based on edit distance algorithm):\n"
+                    correction_hint += "\n".join(similar_suggestions)
+                    correction_hint += "\n\nPlease refer to the similar fields recommended above, or choose other appropriate fields from the field list."
+                else:
+                    correction_hint += "\nPlease carefully check the field list provided above and regenerate using only column names that actually exist. If you cannot find the corresponding field, please explain in analysis_suggestions that this analysis may not be possible."
+            
             prompt += correction_hint
-            logger.info(f"🔄 重试第{retry_count}次，添加无效字段提示: {invalid_columns_hint}")
+            logger.info(f"🔄 重试第{retry_count}次，添加无效字段提示及相似字段推荐")
         
         logger.debug(f"🔍 query_rewrite_agent prompt: {prompt[:200]}...")
         
@@ -1287,7 +1431,7 @@ Please carefully check the field list provided above and regenerate using only c
                                     # 检查字段是否存在于指定的表中
                                     table_cols = valid_column_names[table_name]
                                     if col_name not in table_cols:
-                                        invalid_columns.append(f"{table_name}.{col_name} (字段不存在于该表)")
+                                        invalid_columns.append(f"{col_name} (字段不存在于表 '{table_name}' 中)")
                                         logger.warning(f"字段 '{col_name}' 不存在于表 '{table_name}' 中")
                                         logger.debug(f"表 '{table_name}' 的有效字段（前10个）: {list(table_cols)[:10]}")
                         else:
