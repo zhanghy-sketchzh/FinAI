@@ -1168,6 +1168,7 @@ class ChatExcel(BaseChat):
             if col_details:
                 data_type = col_details.get("data_type", "")
                 description = col_details.get("description", "")
+                domain_knowledge = col_details.get("domain_knowledge", "")
                 
                 if data_type:
                     label = "Data type" if is_english else "数据类型"
@@ -1175,6 +1176,11 @@ class ChatExcel(BaseChat):
                 if description:
                     label = "Description" if is_english else "描述"
                     col_text += f"\n    {label}: {description}"
+                
+                # 添加领域知识（如果有）
+                if domain_knowledge:
+                    label = "**Key Knowledge**" if is_english else "**关键知识**"
+                    col_text += f"\n    {label}: {domain_knowledge}"
                 
                 if "statistics_summary" in col_details:
                     label = "Statistics" if is_english else "统计信息"
@@ -1247,8 +1253,16 @@ class ChatExcel(BaseChat):
                 for col in schema_obj.get("columns", []):
                     col_name = col.get("column_name", "")
                     description = col.get("description", "")
+                    domain_knowledge = col.get("domain_knowledge", "")
                     
                     col_info_text = f"  - {col_name}: {description}"
+                    
+                    # 如果有领域知识，添加到描述中
+                    if domain_knowledge:
+                        if is_english:
+                            col_info_text += f" [Key Knowledge: {domain_knowledge}]"
+                        else:
+                            col_info_text += f" [关键知识: {domain_knowledge}]"
                     
                     # 如果有unique_values_top20，补充显示前5个值
                     if "unique_values_top20" in col:
@@ -2421,7 +2435,7 @@ This data analysis session involves multiple data tables: {table_names_str}.
             history_context = ""
             if self.history_messages and len(self.history_messages) > 0:
                 history_context = "\n=== 历史对话 ===\n"
-                for msg in self.history_messages[-12:]:
+                for msg in self.history_messages[-9:]:
                     if not hasattr(msg, "content"):
                         continue
 
@@ -2542,9 +2556,17 @@ This data analysis session involves multiple data tables: {table_names_str}.
                             for col in schema_obj.get("columns", []):
                                 col_name = col.get("column_name", "")
                                 description = col.get("description", "")
+                                domain_knowledge = col.get("domain_knowledge", "")
                                 
                                 # 构建列信息文本
                                 col_info_text = f"- {col_name}: {description}"
+                                
+                                # 如果有领域知识，添加到描述中
+                                if domain_knowledge:
+                                    if is_english:
+                                        col_info_text += f" [Key Knowledge: {domain_knowledge}]"
+                                    else:
+                                        col_info_text += f" [关键知识: {domain_knowledge}]"
                                 
                                 # 如果有unique_values_top20，补充显示前5个值
                                 if "unique_values_top20" in col:
