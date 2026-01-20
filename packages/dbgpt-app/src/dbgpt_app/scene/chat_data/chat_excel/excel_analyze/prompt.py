@@ -66,6 +66,9 @@ _DUCKDB_RULES_ZH = """
 ### 【CTE和别名规则】：
 **【极其重要】同一SELECT中不能引用本SELECT定义的别名：**
 **CTE字段传递：后续需要的字段必须在CTE的SELECT中明确列出**
+**⚠️ 关键：CTE名称、表别名、子查询别名等SQL标识符必须使用英文或拼音，禁止使用中文！**
+  - ✅ 正确示例：`WITH haiwai_data AS (...)`、`AS hj_table`
+  - ❌ 错误示例：`WITH海外数据 AS (...)`、`AS 合计表`
 **人均计算：使用 NULLIF(分母, 0) 避免除零，如 ROUND(SUM("金额")/NULLIF(COUNT(*), 0), 2)**
 
 ### 【子查询使用规则】：
@@ -129,6 +132,9 @@ _DUCKDB_RULES_EN = """
 ### 【CTE and Alias Rules】：
 **【CRITICAL】Cannot reference aliases within same SELECT:**
 **CTE field passing: Fields needed subsequently must be explicitly listed in CTE SELECT**
+**⚠️ Important: CTE names, table aliases, subquery aliases and other SQL identifiers MUST use English or Pinyin, Chinese characters are FORBIDDEN!**
+  - ✅ Correct: `WITH haiwai_data AS (...)`、`AS summary_table`
+  - ❌ Wrong: `WITH海外数据 AS (...)`、`AS 合计表`
 **Per-capita calculation: Use NULLIF(denominator, 0) to avoid division by zero, e.g. ROUND(SUM("amt")/NULLIF(COUNT(*), 0), 2)**
 
 ### 【Subquery Usage Rules】：
@@ -207,6 +213,7 @@ _ANALYSIS_CONSTRAINTS_MULTI_TABLE_ZH = """
 **WHERE逻辑规则：混用AND和OR时必须用括号明确优先级，根据用户意图正确组合条件**
 子查询规则：禁止在 SELECT 列表中使用返回多行的子查询（会导致"More than one row returned"错误），应使用 JOIN 或窗口函数替代
 **别名规则：同一SELECT中不能引用本层定义的别名，使用完整表达式或多层CTE；CTE中必须列出所有后续需要的字段**
+**⚠️ SQL标识符规则：CTE名称、表别名、子查询别名等必须使用英文或拼音，禁止使用中文（会导致语法错误）**
 数值格式化：所有数值列和聚合结果必须使用 ROUND(column, 2) 保留两位小数
 **LIMIT规则：禁止自动添加LIMIT，除非用户明确要求限制返回行数，否则应展示所有符合条件的数据**
 图表优先：默认使用图表，分类对比用bar/pie，时序用line/area，仅明细记录用table
@@ -264,6 +271,7 @@ String matching rules: String conditions in WHERE clause must exactly match actu
 **WHERE logic rules: Must use parentheses to clarify priority when mixing AND/OR, correctly combine conditions based on user intent**
 Subquery rules: NEVER use subqueries in SELECT list that return multiple rows (causes "More than one row returned" error), use JOIN or window functions instead
 **Alias rules: Cannot reference aliases within same SELECT, use full expressions or multi-layer CTEs; CTE must list all fields needed subsequently**
+**⚠️ SQL identifier rules: CTE names, table aliases, subquery aliases MUST use English or Pinyin, Chinese characters are FORBIDDEN (will cause syntax errors)**
 Numeric formatting: All numeric columns and aggregate results must use ROUND(column, 2) to retain 2 decimal places
 **LIMIT rules: DO NOT automatically add LIMIT unless user explicitly requests to limit returned rows, otherwise display all data that meets conditions**
 Chart priority: Default to charts, categorical use bar/pie, time-series use line/area, only detailed records use table
