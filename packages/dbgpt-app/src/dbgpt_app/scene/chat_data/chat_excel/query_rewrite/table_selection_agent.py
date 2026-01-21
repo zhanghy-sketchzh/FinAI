@@ -282,38 +282,22 @@ class TableSelectionAgent:
 
 === 任务要求 ===
 1. 分析用户问题，理解用户想要分析什么数据
-2. 根据各表的建表SQL、字段详情（含示例值）和描述，判断哪些表包含用户需要的数据
-3. **特别注意字段的示例值/可选值**，这能帮助你判断该字段是否与用户问题相关
-4. **识别问题中的关键词与字段示例值的匹配**：
-   - 提取用户问题中的所有关键词（名词、动词、特定值等）
-   - 将这些关键词与**每个表的字段示例值**进行匹配
-   - 如果某个表的字段示例值中包含问题中的关键词，该表很可能相关
-   - 例如：用户问"转换成美元"，检查是否有表的字段示例值包含"USD"、"美元"等
-   - 例如：用户问"财务部门的数据"，检查是否有表的字段示例值包含"财务"、"财会"等
-5. 选择一个或多个最相关的表（包括直接相关和间接依赖的表）
+2. 根据各表的建表SQL和描述，判断哪些表包含用户需要的数据
+3. 选择一个或多个最相关的表
 
 === 输出格式（JSON） ===
 请严格按照以下JSON格式输出：
 {{
   "selected_tables": ["表名1", "表名2"],
-  "selection_reason": "选择这些表的理由，说明为什么这些表与用户问题相关（可以引用字段的示例值作为依据）"
+  "selection_reason": "选择这些表的理由，说明为什么这些表与用户问题相关"
 }}
 
 **重要提示**：
 - selected_tables 中的表名必须与上面提供的表名完全一致
 - 如果用户问题明确提到了某个表名或关键词，优先选择包含该关键词的表
-- **核心选择策略 - 基于关键词与字段示例值的匹配**：
-  * 第一步：从用户问题中提取所有有意义的关键词（包括名词、动词、特定值、单位等）
-  * 第二步：逐个检查每个表的"字段详情（含示例值）"部分
-  * 第三步：如果某个表的**任何字段的示例值**中包含用户问题的关键词，该表就是相关的
-  * 例如："转换成美元" → 关键词：美元、USD → 查找字段示例值包含"USD"的表
-  * 例如："财务部的平均工资" → 关键词：财务、工资 → 查找字段示例值包含"财务"或"工资"的表
-  * 例如："2024年的数据" → 关键词：2024 → 查找字段示例值包含"2024"的表
-- 如果用户问题涉及"所有"、"全部"等词，应该选择所有相关的表
-- **关键原则**：当用户问题没有明确指定表时（如"奖金最高的人是谁"），如果多个表都包含相关字段（如"奖金"、"姓名"等），应该选择所有包含这些字段的表，而不是只选一个
-- **包含间接依赖的表**：即使某个表不是主查询对象，但如果用户问题中的关键词出现在该表的字段示例值中，也应该选择该表（因为可能需要JOIN或其他关联操作）
-- 宁可多选，不要漏选：如果不确定是否相关，倾向于选择该表
-- 只有当表明显不相关时（完全没有相关字段且字段值也不匹配），才排除该表
+- 如果用户问题涉及"所有"、"全部"等词，可能需要选择多个表
+- 如果无法确定，可以选择多个可能相关的表
+- 尽量精确选择，避免选择不相关的表
 
 请输出JSON：
 """
@@ -330,39 +314,22 @@ class TableSelectionAgent:
 
 === Task Requirements ===
 1. Analyze the user's question to understand what data they want to analyze
-2. Based on the CREATE TABLE SQL, field details (including sample values), and descriptions of each table, determine which tables contain the data the user needs
-3. **Pay special attention to the sample values/possible values of fields**, which can help you determine if a field is relevant to the user's question
-4. **Match keywords from the question with field sample values**:
-   - Extract all meaningful keywords from the user's question (nouns, verbs, specific values, units, etc.)
-   - Match these keywords against the **field sample values** of each table
-   - If any field's sample values in a table contain keywords from the question, that table is likely relevant
-   - Example: "convert to USD" → keywords: USD, dollar, convert → find tables with "USD" in field sample values
-   - Example: "finance department average salary" → keywords: finance, salary → find tables with "finance" or "salary" in field sample values
-   - Example: "2024 data" → keyword: 2024 → find tables with "2024" in field sample values
-5. Select one or more most relevant tables (including both directly related and indirectly dependent tables)
+2. Based on the CREATE TABLE SQL and descriptions of each table, determine which tables contain the data the user needs
+3. Select one or more most relevant tables
 
 === Output Format (JSON) ===
 Please strictly follow the following JSON format:
 {{
   "selected_tables": ["table_name1", "table_name2"],
-  "selection_reason": "The reason for selecting these tables, explaining why they are relevant to the user's question (you can cite field sample values as evidence)"
+  "selection_reason": "The reason for selecting these tables, explaining why they are relevant to the user's question"
 }}
 
 **Important Notes**:
 - The table names in selected_tables must exactly match the table names provided above
 - If the user's question explicitly mentions a table name or keyword, prioritize tables containing that keyword
-- **Core Selection Strategy - Based on keyword matching with field sample values**:
-  * Step 1: Extract all meaningful keywords from the user's question (nouns, verbs, specific values, units, etc.)
-  * Step 2: Check the "Field Details (with sample values)" section for each table one by one
-  * Step 3: If **any field's sample values** in a table contain keywords from the user's question, that table is relevant
-  * Example: "convert to USD" → keywords: USD, dollar → find tables with "USD" in field sample values
-  * Example: "finance dept average salary" → keywords: finance, salary → find tables with "finance" or "salary" in field sample values
-  * Example: "2024 data" → keyword: 2024 → find tables with "2024" in field sample values
-- If the user's question involves "all", "total", etc., all relevant tables should be selected
-- **Key Principle**: When the user's question does not explicitly specify a table (e.g., "who has the highest bonus"), if multiple tables contain relevant fields (e.g., "bonus", "name", etc.), all tables containing these fields should be selected, not just one
-- **Include indirectly dependent tables**: Even if a table is not the main query target, if keywords from the user's question appear in that table's field sample values, it should be selected (because JOIN or other associations may be needed)
-- Prefer to select more rather than miss: if uncertain whether a table is relevant, lean towards selecting it
-- Only exclude a table when it is clearly irrelevant (has no related fields and field values don't match)
+- If the user's question involves "all", "total", etc., multiple tables may need to be selected
+- If uncertain, you can select multiple potentially relevant tables
+- Try to be precise and avoid selecting irrelevant tables
 
 Please output JSON:
 """
