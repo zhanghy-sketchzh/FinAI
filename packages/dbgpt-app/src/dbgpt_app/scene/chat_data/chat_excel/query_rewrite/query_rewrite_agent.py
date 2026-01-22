@@ -1275,9 +1275,34 @@ The following column names you returned do not exist in the data table, DO NOT u
             "context": ModelRequestContext(stream=True),
         }
 
-        # 如果有model_name，添加到请求中
-        if self.model_name:
-            request_params["model"] = self.model_name
+        # 验证模型是否存在，如果不存在则使用默认模型（不指定model_name）
+        actual_model_name = None
+        if self.model_name and self.llm_client:
+            try:
+                # 获取所有可用模型
+                available_models = await self.llm_client.models()
+                model_names = [m.model for m in available_models]
+                
+                if self.model_name in model_names:
+                    actual_model_name = self.model_name
+                    logger.debug(f"✓ 使用指定模型: {self.model_name}")
+                else:
+                    logger.warning(
+                        f"⚠️ 指定的模型 '{self.model_name}' 不存在，可用模型: {model_names}。"
+                        f"将使用默认模型（不指定model_name，让LLM client自动选择）"
+                    )
+                    # 不设置 model_name，让 LLM client 使用默认模型
+                    actual_model_name = None
+            except Exception as e:
+                logger.warning(
+                    f"⚠️ 验证模型 '{self.model_name}' 时出错: {e}，"
+                    f"将使用默认模型（不指定model_name）"
+                )
+                actual_model_name = None
+        
+        # 只有在模型存在时才添加到请求中
+        if actual_model_name:
+            request_params["model"] = actual_model_name
 
         request = ModelRequest(**request_params)
 
