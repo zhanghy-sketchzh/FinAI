@@ -150,6 +150,9 @@ class BaseChat(ABC):
         requested_model = chat_param.model_name
         if requested_model:
             # 检查是否是已知的旧模型名（已被注释掉的模型）
+            # 注意：这里只检查明确已知的废弃模型
+            # 对于其他可能不存在的模型（如 DeepSeek-R1-Online-64K），
+            # 会在 QueryRewriteAgent 和 TableSelectionAgent 中进行动态验证和回退
             deprecated_models = [
                 "Qwen/Qwen3-Coder-30B-A3B-Instruct",
                 # 可以在这里添加其他已废弃的模型名
