@@ -1282,15 +1282,35 @@ class StorageConversation(OnceConversation, StorageItem):
             self._message_ids = [
                 message.identifier.str_identifier for message in message_list
             ]
-            messages_to_save = message_list[self._has_stored_message_index + 1 :]
-            self._has_stored_message_index = len(message_list) - 1
+            
+            # Calculate which messages need to be saved
+            # Only save messages that haven't been saved yet
+            start_index = self._has_stored_message_index + 1
+            messages_to_save = message_list[start_index:]
             
             if self.save_message_independent and messages_to_save:
                 # Save messages independently
-                self.message_storage.save_list(messages_to_save)
+                # Use save_or_update_list to avoid UNIQUE constraint errors
+                # when messages are saved multiple times (e.g., due to retries or concurrent saves)
+                try:
+                    self.message_storage.save_or_update_list(messages_to_save)
+                    # Update the stored message index only after successful save
+                    self._has_stored_message_index = len(message_list) - 1
+                except Exception as msg_error:
+                    import logging
+                    logger = logging.getLogger(__name__)
+                    logger.warning(
+                        f"保存消息失败，但继续保存对话: conv_uid={self.conv_uid}, "
+                        f"消息数量={len(messages_to_save)}, 错误={str(msg_error)}"
+                    )
+                    # Don't update _has_stored_message_index if save failed
+                    # This allows retry on next save_to_storage call
             
             # Save conversation
-            if self.summary is not None and len(self.summary) > 4000:
+            # Ensure summary is not None (database constraint requires non-null)
+            if self.summary is None:
+                self.summary = ""
+            elif len(self.summary) > 4000:
                 self.summary = self.summary[0:4000]
             
             self.conv_storage.save_or_update(self)
@@ -1462,12 +1482,34 @@ def _split_messages_by_round(messages: List[BaseMessage]) -> List[List[BaseMessa
     Returns:
         List[List[BaseMessage]]: The messages split by round.
     """
+    import logging
+    logger = logging.getLogger(__name__)
+    
     messages_by_round: List[List[BaseMessage]] = []
     last_round_index = 0
-    for message in messages:
-        if not message.round_index:
-            # Round index must bigger than 0
-            raise ValueError("Message round_index is not set")
+    current_round = 1  # Start from 1 as round_index must be > 0
+    
+    for i, message in enumerate(messages):
+        # Auto-fix messages with missing or invalid round_index
+        original_round_index = message.round_index
+        if not message.round_index or message.round_index <= 0:
+            # Try to infer round_index from previous messages
+            if i > 0 and messages[i - 1].round_index and messages[i - 1].round_index > 0:
+                # Use the previous message's round_index
+                message.round_index = messages[i - 1].round_index
+            elif last_round_index > 0:
+                # Use the last processed round_index
+                message.round_index = last_round_index
+            else:
+                # Start from round 1 if no previous round_index exists
+                message.round_index = current_round
+                current_round += 1
+            
+            logger.warning(
+                f"Message round_index was not set or invalid (original: {original_round_index}), "
+                f"auto-assigned to {message.round_index}"
+            )
+        
         if message.round_index > last_round_index:
             last_round_index = message.round_index
             messages_by_round.append([])

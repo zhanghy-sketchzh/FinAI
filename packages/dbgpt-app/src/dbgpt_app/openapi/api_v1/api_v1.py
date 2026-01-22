@@ -731,6 +731,14 @@ async def get_chat_instance(dialogue: ConversationVo = Body()) -> BaseChat:
             Result.failed("Unsupported Chat Mode," + dialogue.chat_mode + "!")
         )
 
+    # 如果 model_name 为 None，使用配置文件中的 default_llm
+    if not dialogue.model_name:
+        from dbgpt_app.config import ApplicationConfig
+        app_config = CFG.SYSTEM_APP.get_component(ApplicationConfig, None)
+        if app_config and app_config.models and app_config.models.default_llm:
+            dialogue.model_name = app_config.models.default_llm
+            logger.info(f"使用配置文件中的默认模型: {dialogue.model_name}")
+
     chat_param = ChatParam(
         chat_session_id=dialogue.conv_uid,
         user_name=dialogue.user_name,

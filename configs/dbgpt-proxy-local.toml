@@ -1,0 +1,49 @@
+[system]
+# Load language from environment variable(It is set by the hook)
+language = "${env:DBGPT_LANG:-zh}"
+api_keys = []
+encrypt_key = "your_secret_key"
+
+# Server Configurations
+[service.web]
+host = "0.0.0.0"
+port = 4321
+
+[service.web.database]
+type = "sqlite"
+path = "pilot/meta_data/dbgpt.db"
+[service.model.worker]
+host = "127.0.0.1"
+worker_register_host = "127.0.0.1"
+
+[rag.storage]
+[rag.storage.vector]
+type = "chroma"
+persist_path = "pilot/data"
+
+# Model Configurations
+[models]
+default_llm = "hunyuan-t1-latest"
+
+[[models.llms]]
+name = "hunyuan-t1-latest"
+provider = "proxy/hunyuan"
+api_key = "ap9nun65tTXn5E7DpAZH1nYLDieckGr7"
+api_base = "http://hunyuanapi.woa.com/openapi/v1"
+enable_enhancement = false
+sensitive_business = true
+timeout = 240
+
+[[models.llms]]
+name = "DeepSeek-R1-Online-64K"
+provider = "proxy/deepseek-internal"
+api_key = "0e3a456e-6b9a-49d0-a0c0-4898089641b7"
+wsid = "11417"
+api_base = "http://api.taiji.woa.com/openapi"
+timeout = 240
+
+# [[models.llms]]
+# name = "Qwen/Qwen3-Coder-30B-A3B-Instruct"
+# provider = "proxy/siliconflow"
+# api_key = "sk-knrjwaimdemmawhqyjntgztumpusjmkotbsczdxllgmroltg"
+

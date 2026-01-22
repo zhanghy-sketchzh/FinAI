@@ -145,9 +145,25 @@ class BaseChat(ABC):
         self.chat_session_id = chat_param.chat_session_id
         self.chat_mode = chat_param.chat_mode
         self.current_user_input: HumanMessage = chat_param.real_user_input()
+        
+        # 验证模型名：如果指定的模型不存在或为空，使用默认模型
+        requested_model = chat_param.model_name
+        if requested_model:
+            # 检查是否是已知的旧模型名（已被注释掉的模型）
+            deprecated_models = [
+                "Qwen/Qwen3-Coder-30B-A3B-Instruct",
+                # 可以在这里添加其他已废弃的模型名
+            ]
+            if requested_model in deprecated_models:
+                logger.warning(
+                    f"检测到已废弃的模型名: {requested_model}，"
+                    f"将使用默认模型: {self.model_config.default_llm}"
+                )
+                requested_model = None
+        
         self.llm_model = (
-            chat_param.model_name
-            if chat_param.model_name
+            requested_model
+            if requested_model
             else self.model_config.default_llm
         )
         self.llm_echo = False
