@@ -447,17 +447,23 @@ async def file_upload(
                         system_app=CFG.SYSTEM_APP,
                     )
 
-                    # 检测Excel文件中的sheet数量
-                    import pandas as pd
-
+                    # 检测Excel文件中的sheet数量（优化：不加载整个文件到内存）
                     try:
-                        excel_file = pd.ExcelFile(local_file_path)
-                        sheet_count = len(excel_file.sheet_names)
-                        sheet_names = excel_file.sheet_names
+                        print(f"[DEBUG] 检测Excel sheet数量，文件: {local_file_path}")
+                        # 使用 openpyxl 的 load_workbook(read_only=True) 仅读取元数据
+                        from openpyxl import load_workbook
+                        
+                        wb = load_workbook(local_file_path, read_only=True, data_only=True)
+                        sheet_names = wb.sheetnames
+                        sheet_count = len(sheet_names)
+                        wb.close()
+                        
+                        print(f"[DEBUG] Excel文件包含 {sheet_count} 个sheet: {sheet_names}")
                         logger.info(
                             f"Excel文件包含 {sheet_count} 个sheet: {sheet_names}"
                         )
                     except Exception as e:
+                        print(f"[DEBUG] ⚠️ 无法读取Excel sheet信息: {e}，将使用默认设置")
                         logger.warning(f"无法读取Excel sheet信息: {e}，将使用默认设置")
                         sheet_count = 1
                         sheet_names = None
@@ -733,11 +739,14 @@ async def get_chat_instance(dialogue: ConversationVo = Body()) -> BaseChat:
 
     # 如果 model_name 为 None，使用配置文件中的 default_llm
     if not dialogue.model_name:
-        from dbgpt_app.config import ApplicationConfig
-        app_config = CFG.SYSTEM_APP.get_component(ApplicationConfig, None)
-        if app_config and app_config.models and app_config.models.default_llm:
-            dialogue.model_name = app_config.models.default_llm
-            logger.info(f"使用配置文件中的默认模型: {dialogue.model_name}")
+        try:
+            # ApplicationConfig 存储在 system_app.config.configs 中，而不是作为 component
+            app_config = CFG.SYSTEM_APP.config.configs.get("app_config")
+            if app_config and app_config.models and app_config.models.default_llm:
+                dialogue.model_name = app_config.models.default_llm
+                logger.info(f"使用配置文件中的默认模型: {dialogue.model_name}")
+        except (AttributeError, KeyError) as e:
+            logger.warning(f"无法获取 ApplicationConfig: {e}，将使用 dialogue.model_name 的原始值")
 
     chat_param = ChatParam(
         chat_session_id=dialogue.conv_uid,

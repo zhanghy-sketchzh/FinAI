@@ -366,16 +366,20 @@ class ChatExcel(BaseChat):
 
     @trace()
     async def generate_input_values(self) -> Dict:
+        print("[DEBUG] ========== generate_input_values 开始 ==========")
         if (
             hasattr(self, "_cached_input_values")
             and self._cached_input_values is not None
         ):
+            print("[DEBUG] 使用缓存的输入值")
             return self._cached_input_values
 
+        print("[DEBUG] 确保数据表存在...")
         await self._ensure_data_analysis_table_exists()
 
         user_input = self.current_user_input.last_text
         detected_language = detect_language(user_input)
+        print(f"[DEBUG] 用户输入: {user_input}, 语言: {detected_language}")
         self._detected_language = detected_language
 
         # 获取选中的表列表（优先使用 _selected_tables，否则使用 _all_table_names）
@@ -398,19 +402,23 @@ class ChatExcel(BaseChat):
         # 只获取选中表的 schema 和样本数据
         all_schemas = []
         all_sample_data = []
+        print(f"[DEBUG] 开始获取 {len(selected_tables)} 个表的schema和样本数据...")
         for tbl_name in selected_tables:
             try:
+                print(f"[DEBUG] 获取表 {tbl_name} 的schema...")
                 tbl_schema = await blocking_func_to_async(
                     self._executor, self.excel_reader.get_create_table_sql, tbl_name
                 )
                 all_schemas.append(f"-- 表: {tbl_name}\n{tbl_schema}")
                 
+                print(f"[DEBUG] 获取表 {tbl_name} 的样本数据...")
                 tbl_cols, tbl_data = await blocking_func_to_async(
                     self._executor, self.excel_reader.get_sample_data, tbl_name
                 )
+                print(f"[DEBUG] 表 {tbl_name} 样本数据: {len(tbl_data)} 行")
                 all_sample_data.append((tbl_name, tbl_cols, tbl_data))
             except Exception as e:
-                logger.warning(f"获取表 {tbl_name} 的 schema 失败: {e}")
+                print(f"[DEBUG] ⚠️ 获取表 {tbl_name} 的 schema 失败: {e}")
         
         table_schema = "\n\n".join(all_schemas)
         # 使用第一个表的示例数据
@@ -1623,11 +1631,14 @@ Columns:
 
     async def stream_call(self, text_output: bool = True, incremental: bool = False):
         # 先进行流式查询改写
+        print("[DEBUG] ========== stream_call 开始 ==========")
         await self._ensure_data_analysis_table_exists()
+        print("[DEBUG] ✅ 表检查完成")
         
         user_input = self.current_user_input.last_text
         detected_language = detect_language(user_input)
         self._detected_language = detected_language
+        print(f"[DEBUG] 用户提问: {user_input}, 检测语言: {detected_language}")
 
         select_param_dict = self.select_param
         if isinstance(self.select_param, str):
@@ -1643,6 +1654,7 @@ Columns:
         table_schema = None
         chat_history = []
         all_tables_info = None  # 多表模式下的所有表信息
+        print("[DEBUG] 开始检查是否需要查询改写...")
         
         if select_param_dict and isinstance(select_param_dict, dict):
             data_schema_json = select_param_dict.get("data_schema_json")
@@ -1707,12 +1719,14 @@ Columns:
             and len(all_tables_info) > 1 
             and self.llm_client
         ):
+            print(f"[DEBUG] 多表模式，开始表选择，总表数: {len(all_tables_info)}")
             try:
                 from dbgpt_app.scene.chat_data.chat_excel.query_rewrite import (
                     TableSelectionAgent,
                 )
                 
                 table_selection_agent = TableSelectionAgent(self.llm_client, self.llm_model)
+                print("[DEBUG] 表选择Agent创建完成，开始流式选择...")
                 
                 # 流式表选择
                 selection_result = None

@@ -293,7 +293,7 @@ def read_from_df(
     db.register("temp_df_table", df)
     # The table is explicitly created due to the issue at
     # https://github.com/eosphoros-ai/DB-GPT/issues/2437.
-    db.execute(f"CREATE TABLE {table_name} AS SELECT * FROM temp_df_table")
+    db.execute(f'CREATE TABLE "{table_name}" AS SELECT * FROM temp_df_table')
     return table_name
 
 
@@ -306,7 +306,7 @@ def read_direct(
     try:
         # Try to import data automatically, It will automatically detect from the file
         # extension
-        db.sql(f"create table {table_name} as SELECT * FROM '{file_path}'")
+        db.sql(f'create table "{table_name}" as SELECT * FROM \'{file_path}\'')
         return
     except Exception as e:
         logger.warning(f"Error while reading file: {str(e)}")
@@ -334,7 +334,7 @@ def read_direct(
         from_exp = f"FROM {load_func}('{file_path}', {func_args})"
     else:
         from_exp = f"FROM {load_func}('{file_path}')"
-    load_sql = f"create table {table_name} as SELECT * {from_exp}"
+    load_sql = f'create table "{table_name}" as SELECT * {from_exp}'
     try:
         db.sql(load_sql)
     except Exception as e:
@@ -387,18 +387,18 @@ class ExcelReader:
         if use_existing_db and db_exists:
             logger.info(f"✅ 使用已存在的数据库: {database_name}，表: {table_name}")
             curr_table = self.table_name
-        elif not db_exists:
-            curr_table = self.temp_table_name
+        else:
+            # 数据库不存在，或者 use_existing_db=False（需要重新导入）
+            # 直接使用 table_name 作为目标表名
+            curr_table = self.table_name
             if read_type == "df":
                 read_from_df(self.db, file_path, file_name, curr_table)
             else:
                 read_direct(self.db, file_path, file_name, curr_table)
-        else:
-            curr_table = self.table_name
 
         if show_columns:
             # Print table schema
-            result = self.db.sql(f"DESCRIBE {curr_table}")
+            result = self.db.sql(f'DESCRIBE "{curr_table}"')
             columns = result.fetchall()
             for column in columns:
                 print(column)
@@ -446,7 +446,7 @@ class ExcelReader:
         3. 可重复性（每次结果一致）
         """
         columns, datas = self.run(
-            f"SELECT * FROM {table_name} LIMIT {sample_size};",
+            f'SELECT * FROM "{table_name}" LIMIT {sample_size};',
             table_name=table_name,
             transform=False,
         )
@@ -505,7 +505,7 @@ AND dc.schema_name = 'main';
 
     def get_summary(self, table_name: str) -> str:
         data = self.run(
-            f"SUMMARIZE {table_name}", table_name, transform=False, df_res=True
+            f'SUMMARIZE "{table_name}"', table_name, transform=False, df_res=True
         ).to_json(force_ascii=False)
         return data
 
@@ -533,11 +533,11 @@ AND dc.schema_name = 'main';
 
         select_sql = ", ".join(select_sql_list)
         create_columns_str = ", ".join(create_columns)
-        create_table_str = f"CREATE TABLE {new_table}(\n{create_columns_str}\n);"
+        create_table_str = f'CREATE TABLE "{new_table}"(\n{create_columns_str}\n);'
         sql = f"""
     {create_table_str}
-    INSERT INTO {new_table} SELECT {select_sql}
-    from {old_table_name};
+    INSERT INTO "{new_table}" SELECT {select_sql}
+    from "{old_table_name}";
     """
         logger.info("Begin to transform table, SQL: \n" + sql)
         self.db.sql(sql)
@@ -547,7 +547,7 @@ AND dc.schema_name = 'main';
         table_comment_sql = ""
         try:
             table_comment_sql = (
-                f"COMMENT ON TABLE {new_table} IS '{escaped_table_comment}';"
+                f'COMMENT ON TABLE "{new_table}" IS \'{escaped_table_comment}\';'
             )
             self.db.sql(table_comment_sql)
             logger.info(f"Added comment to table {new_table}")
@@ -645,20 +645,27 @@ AND dc.schema_name = 'main';
         """
         try:
             # 获取列数
-            columns_result = self.db.sql(f"DESCRIBE {table_name}").fetchall()
+            columns_result = self.db.sql(f'DESCRIBE "{table_name}"').fetchall()
             column_count = len(columns_result)
 
             # 获取行数
-            row_count = self.db.sql(f"SELECT COUNT(*) FROM {table_name}").fetchone()[0]
+            row_count = self.db.sql(f'SELECT COUNT(*) FROM "{table_name}"').fetchone()[0]
 
             return {"row_count": row_count, "column_count": column_count}
         except Exception as e:
             logger.error(f"Error getting table size: {e}")
             return {"row_count": 0, "column_count": 0}
 
-    def get_unique_values(self, table_name: str, max_unique_values: int = 100) -> dict:
+    def get_unique_values(self, table_name: str, top_n: int = 20) -> dict:
         """
-        获取表中列的唯一值（仅非数值列，且唯一值数量<=max_unique_values）
+        获取表中列的Top N唯一值（按出现次数排序，仅非数值列）
+        
+        优化策略：
+        1. 使用 GROUP BY + COUNT(*) + ORDER BY + LIMIT 直接获取出现次数最多的top N值
+        2. 扫描全表，但只返回top N，内存占用极小（每列最多N个值）
+        3. 利用 DuckDB 的高效聚合能力，性能优秀
+        4. 不再判断唯一值数量，直接返回top N（如果不足N个，返回全部）
+        
         参考 database_model.py 的 get_unique_values 方法
         这对LLM理解分类数据非常有帮助
         """
@@ -666,7 +673,7 @@ AND dc.schema_name = 'main';
 
         try:
             # 获取所有列及其类型
-            columns_result = self.db.sql(f"DESCRIBE {table_name}").fetchall()
+            columns_result = self.db.sql(f'DESCRIBE "{table_name}"').fetchall()
 
             for column_info in columns_result:
                 column_name = column_info[0]
@@ -685,25 +692,24 @@ AND dc.schema_name = 'main';
                     ]
                 ):
                     try:
-                        # 获取唯一值数量
-                        count_query = (
-                            f'SELECT COUNT(DISTINCT "{column_name}") '
-                            f'FROM "{table_name}"'
+                        # 直接获取出现次数最多的top N值
+                        # 使用 GROUP BY + COUNT(*) 统计每个值的出现次数，然后按次数降序排序
+                        values_query = (
+                            f'SELECT "{column_name}", COUNT(*) as cnt '
+                            f'FROM "{table_name}" '
+                            f'WHERE "{column_name}" IS NOT NULL '
+                            f'GROUP BY "{column_name}" '
+                            f'ORDER BY cnt DESC '
+                            f'LIMIT {top_n}'
                         )
-                        unique_count = self.db.sql(count_query).fetchone()[0]
-
-                        # 只有唯一值数量不超过阈值时才获取
-                        if unique_count <= max_unique_values and unique_count > 0:
-                            # 获取所有唯一值
-                            values_query = (
-                                f'SELECT DISTINCT "{column_name}" '
-                                f'FROM "{table_name}" '
-                                f'WHERE "{column_name}" IS NOT NULL '
-                                f'ORDER BY "{column_name}" '
-                                f"LIMIT {max_unique_values}"
-                            )
-                            result = self.db.sql(values_query).fetchall()
+                        result = self.db.sql(values_query).fetchall()
+                        
+                        # 只保留值，不保留计数
+                        if result:
                             unique_values[column_name] = [row[0] for row in result]
+                            logger.debug(
+                                f"列 {column_name} 获取到 {len(unique_values[column_name])} 个top值"
+                            )
                     except Exception as e:
                         logger.warning(
                             f"Error getting unique values for column {column_name}: {e}"
@@ -725,7 +731,7 @@ AND dc.schema_name = 'main';
             table_size = self.get_table_size(table_name)
 
             # 获取列信息
-            columns_result = self.db.sql(f"DESCRIBE {table_name}").fetchall()
+            columns_result = self.db.sql(f'DESCRIBE "{table_name}"').fetchall()
 
             # 获取唯一值
             unique_values = self.get_unique_values(table_name)

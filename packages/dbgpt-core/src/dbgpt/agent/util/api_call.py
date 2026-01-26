@@ -409,8 +409,20 @@ class ApiCall:
                             if sql is not None and len(sql) > 0:
                                 data_df = sql_run_func(sql)
                                 value.df = data_df
+                                
+                                # 安全保护：限制JSON转换的数据量，防止内存溢出
+                                MAX_JSON_ROWS = 1000  # 最多转换1000行到JSON
+                                if data_df is not None and len(data_df) > MAX_JSON_ROWS:
+                                    logger.warning(
+                                        f"⚠️ DataFrame包含 {len(data_df):,} 行，超过JSON转换限制 {MAX_JSON_ROWS:,}，"
+                                        f"仅转换前 {MAX_JSON_ROWS:,} 行用于前端展示"
+                                    )
+                                    data_df_for_json = data_df.head(MAX_JSON_ROWS)
+                                else:
+                                    data_df_for_json = data_df
+                                
                                 value.api_result = json.loads(
-                                    data_df.to_json(
+                                    data_df_for_json.to_json(
                                         orient="records",
                                         date_format="iso",
                                         date_unit="s",
