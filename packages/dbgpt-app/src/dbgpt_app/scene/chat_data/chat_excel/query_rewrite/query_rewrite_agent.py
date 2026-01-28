@@ -1271,7 +1271,7 @@ The following column names you returned do not exist in the data table, DO NOT u
         # 调用LLM（流式）
         request_params = {
             "messages": [ModelMessage(role=ModelMessageRoleType.HUMAN, content=prompt)],
-            "max_new_tokens": 2000,
+            "max_new_tokens": 6000,
             "context": ModelRequestContext(stream=True),
         }
 

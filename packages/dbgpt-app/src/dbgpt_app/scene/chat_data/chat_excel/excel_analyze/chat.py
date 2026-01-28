@@ -239,6 +239,60 @@ class ChatExcel(BaseChat):
                     file_name,
                     self._curr_table,  # 使用第一个表名初始化
                 )
+                
+                # 尝试从ExcelAutoRegisterService的缓存中加载schema信息
+                try:
+                    from dbgpt_serve.datasource.service.excel_auto_register import ExcelAutoRegisterService
+                    
+                    excel_service = ExcelAutoRegisterService()
+                    
+                    # 尝试通过数据库路径反查缓存信息
+                    import sqlite3
+                    cache_db_path = excel_service.cache_manager.meta_db_path
+                    if os.path.exists(cache_db_path):
+                        conn = sqlite3.connect(str(cache_db_path))
+                        cursor = conn.cursor()
+                        
+                        # 查询匹配的记录（通过db_path），同时获取summary_prompt
+                        cursor.execute(
+                            "SELECT data_schema_json, summary_prompt FROM excel_metadata WHERE db_path = ?",
+                            (actual_db_path,),
+                        )
+                        result = cursor.fetchone()
+                        
+                        if result and result[0]:
+                            # 找到schema，加载到select_param
+                            if not hasattr(self, 'select_param') or not self.select_param:
+                                self.select_param = {}
+                            if isinstance(self.select_param, str):
+                                self.select_param = json.loads(self.select_param)
+                            self.select_param["data_schema_json"] = result[0]
+                            # 关键：加载summary_prompt，这样就会跳过ExcelLearning
+                            if result[1]:
+                                self.select_param["summary_prompt"] = result[1]
+                            logger.info(f"从ExcelAutoRegisterService缓存加载schema成功（包含summary_prompt）")
+                        else:
+                            # 尝试多表模式查询
+                            cursor.execute(
+                                "SELECT data_schema_json, summary_prompt FROM excel_tables_metadata WHERE db_path = ?",
+                                (actual_db_path,),
+                            )
+                            multi_results = cursor.fetchall()
+                            if multi_results and multi_results[0][0]:
+                                if not hasattr(self, 'select_param') or not self.select_param:
+                                    self.select_param = {}
+                                if isinstance(self.select_param, str):
+                                    self.select_param = json.loads(self.select_param)
+                                self.select_param["data_schema_json"] = multi_results[0][0]
+                                # 关键：加载summary_prompt，这样就会跳过ExcelLearning
+                                if multi_results[0][1]:
+                                    self.select_param["summary_prompt"] = multi_results[0][1]
+                                logger.info(f"从ExcelAutoRegisterService缓存加载多表schema成功（包含summary_prompt）")
+                        
+                        conn.close()
+                except Exception as schema_e:
+                    logger.warning(f"从ExcelAutoRegisterService缓存加载schema失败: {schema_e}")
+                
                 if self._is_multi_table_mode:
                     logger.info(f"使用多表模式，表: {existing_table_names}")
                 else:
@@ -277,9 +331,16 @@ class ChatExcel(BaseChat):
         file_name: str,
         duckdb_table_name: str = None,
     ):
+        """
+        从已存在的DuckDB数据库创建ExcelReader
+        
+        注意：这里使用特殊的初始化方式，绕过ExcelReader的__init__，
+        直接连接到已存在的数据库，避免重新导入数据
+        """
         import duckdb
 
-        db_conn = duckdb.connect(database=duckdb_path, read_only=True)
+        # 修复：使用read_only=False，因为后续可能需要创建临时表或视图
+        db_conn = duckdb.connect(database=duckdb_path, read_only=False)
 
         try:
             if not duckdb_table_name:
@@ -293,13 +354,21 @@ class ChatExcel(BaseChat):
                 else:
                     raise ValueError(f"在DuckDB数据库中未找到任何表: {duckdb_path}")
 
+            # 使用object.__new__创建实例，绕过__init__
             reader = object.__new__(ExcelReader)
+            
+            # 手动初始化所有必要的属性
             reader.conv_uid = conv_uid
-            reader.db = db_conn
+            reader.db = db_conn  # 关键：设置数据库连接
             reader.temp_table_name = duckdb_table_name
             reader.table_name = duckdb_table_name
             reader.excel_file_name = file_name
+            
+            # 确保db连接不会被意外关闭
+            # 添加一个标记，表示这是一个从已存在数据库创建的reader
+            reader._is_external_db = True
 
+            logger.info(f"成功从DuckDB创建ExcelReader: db={duckdb_path}, table={duckdb_table_name}")
             return reader
 
         except Exception as e:

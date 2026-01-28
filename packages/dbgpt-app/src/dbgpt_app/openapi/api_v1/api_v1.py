@@ -384,8 +384,8 @@ async def file_upload(
         file_param = file_params[0]
         _, file_extension = os.path.splitext(file_param["file_name"])
         if file_extension.lower() in [".xls", ".xlsx", ".csv", ".json", ".parquet"]:
-            # 自动注册到数据源（仅支持 Excel）
-            if file_extension.lower() in [".xls", ".xlsx"]:
+            # 自动注册到数据源（支持 Excel 和 CSV）
+            if file_extension.lower() in [".xls", ".xlsx", ".csv"]:
                 try:
                     # 获取本地文件路径 - download_file 返回 (path, metadata)
                     local_file_path, _ = await blocking_func_to_async(
@@ -447,26 +447,33 @@ async def file_upload(
                         system_app=CFG.SYSTEM_APP,
                     )
 
-                    # 检测Excel文件中的sheet数量（优化：不加载整个文件到内存）
-                    try:
-                        print(f"[DEBUG] 检测Excel sheet数量，文件: {local_file_path}")
-                        # 使用 openpyxl 的 load_workbook(read_only=True) 仅读取元数据
-                        from openpyxl import load_workbook
-                        
-                        wb = load_workbook(local_file_path, read_only=True, data_only=True)
-                        sheet_names = wb.sheetnames
-                        sheet_count = len(sheet_names)
-                        wb.close()
-                        
-                        print(f"[DEBUG] Excel文件包含 {sheet_count} 个sheet: {sheet_names}")
-                        logger.info(
-                            f"Excel文件包含 {sheet_count} 个sheet: {sheet_names}"
-                        )
-                    except Exception as e:
-                        print(f"[DEBUG] ⚠️ 无法读取Excel sheet信息: {e}，将使用默认设置")
-                        logger.warning(f"无法读取Excel sheet信息: {e}，将使用默认设置")
+                    # 检测Excel文件中的sheet数量（CSV文件只有一个表）
+                    is_csv_file = file_extension.lower() == ".csv"
+                    if is_csv_file:
+                        # CSV文件只有一个表
                         sheet_count = 1
                         sheet_names = None
+                        logger.info(f"CSV文件: {original_filename}，作为单表处理")
+                    else:
+                        try:
+                            print(f"[DEBUG] 检测Excel sheet数量，文件: {local_file_path}")
+                            # 使用 openpyxl 的 load_workbook(read_only=True) 仅读取元数据
+                            from openpyxl import load_workbook
+                            
+                            wb = load_workbook(local_file_path, read_only=True, data_only=True)
+                            sheet_names = wb.sheetnames
+                            sheet_count = len(sheet_names)
+                            wb.close()
+                            
+                            print(f"[DEBUG] Excel文件包含 {sheet_count} 个sheet: {sheet_names}")
+                            logger.info(
+                                f"Excel文件包含 {sheet_count} 个sheet: {sheet_names}"
+                            )
+                        except Exception as e:
+                            print(f"[DEBUG] ⚠️ 无法读取Excel sheet信息: {e}，将使用默认设置")
+                            logger.warning(f"无法读取Excel sheet信息: {e}，将使用默认设置")
+                            sheet_count = 1
+                            sheet_names = None
 
                     # 判断是否使用多表模式
                     # 如果明确指定了 multi_table_mode，则使用指定的值

@@ -153,7 +153,7 @@ def add_quotes_to_chinese_columns(sql, column_names=[]):
 
     sql = re.sub(dot_pattern, replace_dot_notation, sql)
 
-    # 3. ✅ 关键修复：处理所有独立的标识符（包括函数参数内的列名）
+    # 3. 关键修复：处理所有独立的标识符（包括函数参数内的列名）
     # 匹配标识符：字母/数字/下划线/中文组成，后面不是左括号（避免匹配函数名）
     # 同时支持以数字开头的列名（如 2022_销售额）
     identifier_pattern = r'(?<!")(?<!\w)([a-zA-Z_\u4e00-\u9fa5][\w\u4e00-\u9fa5]*|\d[\w\u4e00-\u9fa5]+)(?!\()(?!")'  # noqa: E501
@@ -286,13 +286,11 @@ def read_from_df(
                 try:
                     df[column_name] = df[column_name].astype(str)
                 except Exception:
-                    print("Can't transform column: " + column_name)
+                    logger.warning(f"Can't transform column: {column_name}")
 
     df = df.rename(columns=lambda x: x.strip().replace(" ", "_"))
-    # write data in duckdb
     db.register("temp_df_table", df)
-    # The table is explicitly created due to the issue at
-    # https://github.com/eosphoros-ai/DB-GPT/issues/2437.
+    # Explicitly create table to avoid DuckDB issue #2437
     db.execute(f'CREATE TABLE "{table_name}" AS SELECT * FROM temp_df_table')
     return table_name
 
@@ -304,47 +302,41 @@ def read_direct(
     table_name: str,
 ):
     try:
-        # Try to import data automatically, It will automatically detect from the file
-        # extension
-        db.sql(f'create table "{table_name}" as SELECT * FROM \'{file_path}\'')
+        db.sql(f'CREATE TABLE "{table_name}" AS SELECT * FROM \'{file_path}\'')
         return
     except Exception as e:
         logger.warning(f"Error while reading file: {str(e)}")
+
     file_extension = os.path.splitext(file_path)[1]
-    load_params = {}
-    if file_extension == ".csv":
-        load_func = "read_csv"
-        load_params = {}
-    elif file_extension == ".xlsx":
-        # 尝试使用DuckDB的read_xlsx，如果失败则fallback到pandas
-        load_func = "read_xlsx"
-        load_params["empty_as_varchar"] = "true"
-        load_params["ignore_errors"] = "true"
-    elif file_extension == ".xls":
+    if file_extension == ".xls":
         return read_from_df(db, file_path, file_name, table_name)
-    elif file_extension == ".json":
-        load_func = "read_json_auto"
-    elif file_extension == ".parquet":
-        load_func = "read_parquet"
-    else:
+
+    load_func_map = {
+        ".csv": ("read_csv", {}),
+        ".xlsx": ("read_xlsx", {"empty_as_varchar": "true", "ignore_errors": "true"}),
+        ".json": ("read_json_auto", {}),
+        ".parquet": ("read_parquet", {}),
+    }
+
+    if file_extension not in load_func_map:
         raise ValueError(f"Unsupported file format: {file_extension}")
 
+    load_func, load_params = load_func_map[file_extension]
     func_args = ", ".join([f"{k}={v}" for k, v in load_params.items()])
-    if func_args:
-        from_exp = f"FROM {load_func}('{file_path}', {func_args})"
-    else:
-        from_exp = f"FROM {load_func}('{file_path}')"
-    load_sql = f'create table "{table_name}" as SELECT * {from_exp}'
+    from_exp = (
+        f"FROM {load_func}('{file_path}', {func_args})"
+        if func_args
+        else f"FROM {load_func}('{file_path}')"
+    )
+
     try:
-        db.sql(load_sql)
+        db.sql(f'CREATE TABLE "{table_name}" AS SELECT * {from_exp}')
     except Exception as e:
         error_msg = str(e)
         logger.warning(f"Error while reading file with {load_func}: {error_msg}")
-        # 如果是类型转换错误或解析错误，直接fallback到pandas
-        if (
-            "Could not convert" in error_msg
-            or "Failed to parse" in error_msg
-            or "Invalid Input" in error_msg
+        if any(
+            keyword in error_msg
+            for keyword in ["Could not convert", "Failed to parse", "Invalid Input"]
         ):
             logger.info("检测到类型转换错误，使用pandas读取（支持混合类型数据）")
         return read_from_df(db, file_path, file_name, table_name)
@@ -374,39 +366,38 @@ class ExcelReader:
         )
 
         self.db = duckdb.connect(database=database_name, read_only=False)
-
-        self.temp_table_name = "temp_table"
         self.table_name = table_name
-
         self.excel_file_name = file_name
 
         if duckdb_extensions_dir:
             self.install_extension(duckdb_extensions_dir, force_install)
 
-        # 如果use_existing_db=True且数据库已存在，则跳过数据导入
-        if use_existing_db and db_exists:
-            logger.info(f"✅ 使用已存在的数据库: {database_name}，表: {table_name}")
-            curr_table = self.table_name
-        else:
-            # 数据库不存在，或者 use_existing_db=False（需要重新导入）
-            # 直接使用 table_name 作为目标表名
-            curr_table = self.table_name
+        if not (use_existing_db and db_exists):
             if read_type == "df":
-                read_from_df(self.db, file_path, file_name, curr_table)
+                read_from_df(self.db, file_path, file_name, self.table_name)
             else:
-                read_direct(self.db, file_path, file_name, curr_table)
+                read_direct(self.db, file_path, file_name, self.table_name)
 
         if show_columns:
-            # Print table schema
-            result = self.db.sql(f'DESCRIBE "{curr_table}"')
+            result = self.db.sql(f'DESCRIBE "{self.table_name}"')
             columns = result.fetchall()
             for column in columns:
-                print(column)
+                logger.info(f"Column: {column}")
 
     def close(self):
+        """关闭数据库连接
+        
+        注意：如果是从外部数据库创建的reader（_is_external_db=True），
+        则不关闭连接，由外部管理连接的生命周期
+        """
         if self.db:
-            self.db.close()
-            self.db = None
+            # 检查是否是外部数据库（从已存在的DuckDB创建的reader）
+            is_external = getattr(self, '_is_external_db', False)
+            if not is_external:
+                self.db.close()
+                self.db = None
+            else:
+                logger.debug("跳过关闭外部数据库连接")
 
     def __del__(self):
         self.close()
@@ -516,68 +507,55 @@ AND dc.schema_name = 'main';
         transform: TransformedExcelResponse,
     ):
         table_comment = transform.description
-        select_sql_list = []
-        new_table = new_table_name
-
         _, cl_datas = self.get_columns(old_table_name)
         old_col_name_to_type = {cl_data[0]: cl_data[1] for cl_data in cl_datas}
 
+        select_sql_list = []
         create_columns = []
         for col_transform in transform.columns:
             old_column_name = col_transform["old_column_name"]
             new_column_name = col_transform["new_column_name"]
             new_column_type = old_col_name_to_type[old_column_name]
-            old_column_name = f'"{old_column_name}"'  # 使用双引号括起列名
-            select_sql_list.append(f"{old_column_name} AS {new_column_name}")
+            select_sql_list.append(f'"{old_column_name}" AS {new_column_name}')
             create_columns.append(f"{new_column_name} {new_column_type}")
 
-        select_sql = ", ".join(select_sql_list)
         create_columns_str = ", ".join(create_columns)
-        create_table_str = f'CREATE TABLE "{new_table}"(\n{create_columns_str}\n);'
         sql = f"""
-    {create_table_str}
-    INSERT INTO "{new_table}" SELECT {select_sql}
-    from "{old_table_name}";
-    """
-        logger.info("Begin to transform table, SQL: \n" + sql)
+        CREATE TABLE "{new_table_name}"(\n{create_columns_str}\n);
+        INSERT INTO "{new_table_name}" SELECT {", ".join(select_sql_list)}
+        FROM "{old_table_name}";
+        """
+        logger.info(f"Transforming table: {old_table_name} -> {new_table_name}")
         self.db.sql(sql)
 
-        # Transform single quotes in table comments, then execute separately
+        # Add table comment
         escaped_table_comment = table_comment.replace("'", "''")
-        table_comment_sql = ""
         try:
-            table_comment_sql = (
-                f'COMMENT ON TABLE "{new_table}" IS \'{escaped_table_comment}\';'
+            self.db.sql(
+                f'COMMENT ON TABLE "{new_table_name}" IS \'{escaped_table_comment}\';'
             )
-            self.db.sql(table_comment_sql)
-            logger.info(f"Added comment to table {new_table}")
+            logger.info(f"Added comment to table {new_table_name}")
         except Exception as e:
-            logger.warning(
-                f"Error while adding table comment: {str(e)}\nSQL: {table_comment_sql}"
-            )
+            logger.warning(f"Error while adding table comment: {str(e)}")
 
         for col_transform in transform.columns:
-            column_comment_sql = ""
-            new_column_name = ""
             try:
                 new_column_name = col_transform["new_column_name"]
                 column_description = col_transform["column_description"]
-                # In SQL, single quotes within single quotes need to be escaped with
-                # two single quotes
                 escaped_description = column_description.replace("'", "''")
-                column_comment_sql = (
-                    f"COMMENT ON COLUMN {new_table}.{new_column_name}"
+                self.db.sql(
+                    f'COMMENT ON COLUMN "{new_table_name}".{new_column_name}'
                     f" IS '{escaped_description}';"
                 )
-                self.db.sql(column_comment_sql)
-                logger.debug(f"Added comment to column {new_table}.{new_column_name}")
+                logger.debug(
+                    f"Added comment to column {new_table_name}.{new_column_name}"
+                )
             except Exception as e:
                 logger.warning(
-                    f"Error while adding comment to column {new_column_name}:"
-                    f" {str(e)}\nSQL: {column_comment_sql}"
+                    f"Error while adding comment to column {new_column_name}: {str(e)}"
                 )
 
-        return new_table
+        return new_table_name
 
     def install_extension(
         self, duckdb_extensions_dir: Optional[List[str]], force_install: bool = False

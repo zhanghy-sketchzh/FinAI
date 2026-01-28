@@ -685,6 +685,47 @@ class ExcelAutoRegisterService:
             logger.warning(f"openpyxl去除筛选失败: {e}")
             return excel_file_path
 
+    def _is_csv_file(self, file_path: str) -> bool:
+        """判断是否为CSV文件"""
+        file_ext = Path(file_path).suffix.lower()
+        return file_ext in ['.csv', '.txt', '.tsv']
+    
+    def _read_csv_sample(self, csv_file_path: str, nrows: int = 1000) -> pd.DataFrame:
+        """
+        读取CSV文件的样本数据（用于表头分析和列类型推断）
+        
+        Args:
+            csv_file_path: CSV文件路径
+            nrows: 读取的行数
+            
+        Returns:
+            DataFrame
+        """
+        try:
+            # 尝试自动检测分隔符和编码
+            encodings = ['utf-8', 'gbk', 'gb2312', 'gb18030', 'latin1']
+            
+            for encoding in encodings:
+                try:
+                    df = pd.read_csv(
+                        csv_file_path,
+                        nrows=nrows,
+                        encoding=encoding,
+                        low_memory=False
+                    )
+                    logger.info(f"CSV文件编码: {encoding}, 列数: {len(df.columns)}, 样本行数: {len(df)}")
+                    return df
+                except UnicodeDecodeError:
+                    continue
+                except Exception as e:
+                    logger.warning(f"使用编码 {encoding} 读取CSV失败: {e}")
+                    continue
+            
+            raise Exception("无法使用任何编码读取CSV文件")
+        except Exception as e:
+            logger.error(f"读取CSV样本失败: {e}")
+            raise
+
     def _read_excel_file(self, excel_file_path: str, sheet_name=None, header=None) -> pd.DataFrame:
         """
         智能读取 Excel 文件，支持 .xls 和 .xlsx 格式
@@ -2359,6 +2400,110 @@ class ExcelAutoRegisterService:
             "conv_uid": conv_uid,
         }
 
+    def process_csv_to_duckdb(
+        self,
+        csv_file_path: str,
+        db_path: str,
+        table_name: str,
+        chunk_size: int = 100000
+    ) -> Tuple[int, List[str]]:
+        """
+        分块读取CSV文件并导入到DuckDB（内存优化版本）
+        
+        Args:
+            csv_file_path: CSV文件路径
+            db_path: DuckDB数据库路径
+            table_name: 表名
+            chunk_size: 每次读取的行数
+            
+        Returns:
+            (总行数, 列名列表)
+        """
+        import duckdb
+        
+        logger.info(f"开始分块导入CSV文件到DuckDB: {csv_file_path}")
+        print(f"[DEBUG] 分块导入CSV，chunk_size={chunk_size}")
+        
+        # 检测编码和分隔符
+        encodings = ['utf-8', 'gbk', 'gb2312', 'gb18030', 'latin1']
+        detected_encoding = 'utf-8'
+        
+        for encoding in encodings:
+            try:
+                pd.read_csv(csv_file_path, nrows=10, encoding=encoding)
+                detected_encoding = encoding
+                logger.info(f"检测到CSV编码: {encoding}")
+                break
+            except:
+                continue
+        
+        # 使用DuckDB直接读取CSV（最高效的方式）
+        conn = duckdb.connect(db_path)
+        try:
+            # DuckDB可以直接高效读取CSV文件
+            table_name_quoted = f'"{table_name}"'
+            
+            # 先删除已存在的表
+            conn.execute(f"DROP TABLE IF EXISTS {table_name_quoted}")
+            
+            # 使用DuckDB的read_csv函数直接创建表（自动推断类型）
+            logger.info(f"使用DuckDB直接读取CSV...")
+            conn.execute(f"""
+                CREATE TABLE {table_name_quoted} AS 
+                SELECT * FROM read_csv_auto(
+                    '{csv_file_path}',
+                    header=true,
+                    sample_size=100000
+                )
+            """)
+            
+            # 获取行数和列信息
+            row_count = conn.execute(f'SELECT COUNT(*) FROM {table_name_quoted}').fetchone()[0]
+            columns_result = conn.execute(f'DESCRIBE {table_name_quoted}').fetchall()
+            columns = [col[0] for col in columns_result]
+            
+            logger.info(f"CSV导入完成: {row_count:,} 行, {len(columns)} 列")
+            print(f"[DEBUG] CSV导入完成: {row_count:,} 行")
+            
+            return row_count, columns
+            
+        except Exception as e:
+            logger.error(f"DuckDB直接读取失败，尝试pandas分块读取: {e}")
+            
+            # 回退到pandas分块读取
+            conn.execute(f"DROP TABLE IF EXISTS {table_name_quoted}")
+            
+            total_rows = 0
+            columns = None
+            
+            for chunk_idx, chunk in enumerate(pd.read_csv(
+                csv_file_path,
+                chunksize=chunk_size,
+                encoding=detected_encoding,
+                low_memory=False
+            )):
+                if chunk_idx == 0:
+                    columns = chunk.columns.tolist()
+                    # 创建表
+                    conn.register("temp_chunk", chunk)
+                    conn.execute(f"CREATE TABLE {table_name_quoted} AS SELECT * FROM temp_chunk")
+                else:
+                    # 追加数据
+                    conn.register("temp_chunk", chunk)
+                    conn.execute(f"INSERT INTO {table_name_quoted} SELECT * FROM temp_chunk")
+                
+                total_rows += len(chunk)
+                
+                if chunk_idx % 10 == 0:
+                    logger.info(f"已导入 {total_rows:,} 行...")
+                    print(f"[DEBUG] 已导入 {total_rows:,} 行")
+            
+            logger.info(f"CSV分块导入完成: {total_rows:,} 行")
+            return total_rows, columns
+            
+        finally:
+            conn.close()
+
     def process_excel(
         self,
         excel_file_path: str,
@@ -2371,21 +2516,36 @@ class ExcelAutoRegisterService:
         source_column_name: str = "数据类型",
         preview_limit: int = None,
     ) -> Dict:
-        """处理Excel文件，自动注册到数据源
+        """处理Excel/CSV文件，自动注册到数据源
 
         Args:
-            excel_file_path: Excel文件路径
+            excel_file_path: Excel/CSV文件路径
             table_name: 表名（可选）
             force_reimport: 是否强制重新导入
             original_filename: 原始文件名（可选）
             conv_uid: 会话ID（可选）
-            sheet_names: 要处理的sheet名称列表，如果为None则处理所有sheet
-            merge_sheets: 是否合并多个sheet（如果为True，将多个sheet合并为一张表）
-            source_column_name: 合并时添加的来源列名，默认为"数据类型"
+            sheet_names: 要处理的sheet名称列表，如果为None则处理所有sheet（仅Excel）
+            merge_sheets: 是否合并多个sheet（如果为True，将多个sheet合并为一张表，仅Excel）
+            source_column_name: 合并时添加的来源列名，默认为"数据类型"（仅Excel）
             preview_limit: 预览数据行数限制，None表示不限制
         """
         if original_filename is None:
             original_filename = Path(excel_file_path).name
+
+        # 检查是否为CSV文件
+        is_csv = self._is_csv_file(excel_file_path)
+        
+        if is_csv:
+            logger.info(f"检测到CSV文件: {original_filename}")
+            print(f"[DEBUG] 处理CSV文件: {excel_file_path}")
+            return self._process_csv_file(
+                excel_file_path,
+                table_name,
+                force_reimport,
+                original_filename,
+                conv_uid,
+                preview_limit
+            )
 
         # 先计算原始文件的哈希（在任何修改之前），确保相同文件产生相同哈希
         # 读取Excel获取sheet信息（用于哈希计算）- 优化：不加载整个文件
@@ -3771,6 +3931,240 @@ This Excel file contains multiple data tables. Besides the current table "{table
             return obj
         else:
             return str(obj)
+
+    def _process_csv_file(
+        self,
+        csv_file_path: str,
+        table_name: str = None,
+        force_reimport: bool = False,
+        original_filename: str = None,
+        conv_uid: str = None,
+        preview_limit: int = None,
+    ) -> Dict:
+        """
+        处理CSV文件（内存优化版本，支持大文件）
+        
+        Args:
+            csv_file_path: CSV文件路径
+            table_name: 表名
+            force_reimport: 是否强制重新导入
+            original_filename: 原始文件名
+            conv_uid: 会话ID
+            preview_limit: 预览数据行数限制
+            
+        Returns:
+            处理结果字典
+        """
+        # 计算文件哈希
+        content_hash = self.cache_manager.calculate_file_hash(csv_file_path)
+        
+        # 检查缓存
+        if not force_reimport:
+            cached_info = self.cache_manager.get_cached_info(content_hash)
+            if cached_info and os.path.exists(cached_info["db_path"]):
+                logger.info(f"CSV缓存命中: {original_filename}")
+                
+                # 获取预览数据
+                preview_data = self.get_table_preview_data(
+                    cached_info["db_path"],
+                    cached_info["table_name"],
+                    preview_limit,
+                    original_filename
+                )
+                
+                # 获取top_10_rows
+                try:
+                    import duckdb
+                    conn = duckdb.connect(cached_info["db_path"], read_only=True)
+                    columns_result = conn.execute(
+                        f'DESCRIBE "{cached_info["table_name"]}"'
+                    ).fetchall()
+                    columns = [col[0] for col in columns_result]
+                    rows = conn.execute(
+                        f'SELECT * FROM "{cached_info["table_name"]}" LIMIT 10'
+                    ).fetchall()
+                    conn.close()
+                    top_10_rows = [dict(zip(columns, row)) for row in rows]
+                    top_10_rows = self._convert_to_json_serializable(top_10_rows)
+                except Exception as e:
+                    logger.warning(f"从数据库读取top_10_rows失败: {e}")
+                    top_10_rows = []
+                
+                return {
+                    "status": "cached",
+                    "message": "使用缓存数据",
+                    "content_hash": content_hash,
+                    "db_name": cached_info["db_name"],
+                    "db_path": cached_info["db_path"],
+                    "table_name": cached_info["table_name"],
+                    "row_count": cached_info["row_count"],
+                    "column_count": cached_info["column_count"],
+                    "columns_info": cached_info["columns_info"],
+                    "summary_prompt": cached_info["summary_prompt"],
+                    "data_schema_json": cached_info.get("data_schema_json"),
+                    "id_columns": cached_info.get("id_columns", []),
+                    "top_10_rows": top_10_rows,
+                    "preview_data": preview_data,
+                    "access_count": cached_info["access_count"],
+                    "last_accessed": cached_info["last_accessed"],
+                    "conv_uid": conv_uid,
+                }
+        
+        # 没有缓存，开始处理
+        logger.info(f"处理CSV文件: {original_filename}")
+        
+        # 获取LLM客户端
+        if self.llm_client is None or self.model_name is None:
+            llm_client, model_name = self._get_llm_client_and_model()
+            if self.llm_client is None and llm_client is not None:
+                self.llm_client = llm_client
+            if self.model_name is None and model_name is not None:
+                self.model_name = model_name
+        
+        # 生成表名
+        if table_name is None:
+            base_name = Path(original_filename).stem
+            base_name = "".join(
+                c if c.isalnum() or c == "_" else "_" for c in base_name
+            )
+            if base_name and base_name[0].isdigit():
+                base_name = f"tbl_{base_name}"
+            if not base_name or len(base_name) < 2:
+                base_name = f"csv_table_{content_hash[:8]}"
+            table_name = base_name
+        
+        db_name = f"csv_{content_hash[:8]}"
+        db_filename = f"{db_name}.duckdb"
+        db_path = str(self.db_storage_dir / db_filename)
+        
+        print(f"[DEBUG] CSV数据库路径: {db_path}, 表名: {table_name}")
+        
+        # 使用DuckDB直接读取CSV（内存优化）
+        actual_row_count, columns = self.process_csv_to_duckdb(
+            csv_file_path, db_path, table_name
+        )
+        
+        # 从DuckDB加载样本数据用于分析（只加载1000行）
+        import duckdb
+        conn = duckdb.connect(db_path)
+        df_sample = conn.execute(f'SELECT * FROM "{table_name}" LIMIT 1000').df()
+        conn.close()
+        
+        print(f"[DEBUG] 加载样本数据: {len(df_sample)} 行用于分析")
+        
+        # 数据清洗（仅对样本）
+        df_sample = self._remove_empty_columns(df_sample)
+        df_sample = self._remove_duplicate_columns(df_sample)
+        df_sample = self._format_date_columns(df_sample)
+        
+        # 识别ID列
+        id_columns = []
+        try:
+            id_columns = self._detect_id_columns_with_llm(df_sample, table_name)
+            if id_columns:
+                logger.info(f"ID列: {id_columns}")
+                print(f"[DEBUG] 检测到ID列: {id_columns}")
+        except Exception as e:
+            logger.warning(f"识别ID列失败: {e}")
+        
+        # 对样本数据进行类型转换
+        df_sample = self._convert_id_columns_to_string(df_sample, id_columns)
+        df_sample = self._convert_column_types(df_sample, id_columns)
+        df_sample = self._format_numeric_columns(df_sample, id_columns)
+        
+        # 清理列名
+        df_sample.columns = [
+            str(col)
+            .replace(" ", "")
+            .replace("\u00a0", "")
+            .replace("\n", "")
+            .replace("\r", "")
+            .replace("\t", "")
+            for col in df_sample.columns
+        ]
+        
+        # 去重列名
+        final_columns = []
+        seen_columns = {}
+        for col in df_sample.columns:
+            if col in seen_columns:
+                seen_columns[col] += 1
+                final_columns.append(f"{col}_{seen_columns[col]}")
+            else:
+                seen_columns[col] = 0
+                final_columns.append(col)
+        df_sample.columns = final_columns
+        
+        print(f"[DEBUG] 样本数据处理完成，列数: {len(df_sample.columns)}")
+        
+        # 获取列信息
+        conn = duckdb.connect(db_path)
+        try:
+            columns_result = conn.execute(f'DESCRIBE "{table_name}"').fetchall()
+            columns_info = [
+                {"name": col[0], "type": col[1], "dtype": col[1]}
+                for col in columns_result
+            ]
+        finally:
+            conn.close()
+        
+        # 生成schema
+        try:
+            schema_understanding_json = self._generate_schema_understanding_with_llm(
+                df_sample, table_name, id_columns
+            )
+        except Exception as llm_e:
+            logger.warning(f"LLM生成schema失败，使用基础schema: {llm_e}")
+            schema_understanding_json = self._generate_basic_schema_json(
+                df_sample, table_name, id_columns
+            )
+        
+        summary_prompt = self._format_schema_as_prompt(
+            schema_understanding_json, df_sample, table_name
+        )
+        
+        # 保存缓存
+        self.cache_manager.save_cache_info(
+            content_hash=content_hash,
+            original_filename=original_filename,
+            table_name=table_name,
+            db_name=db_name,
+            db_path=db_path,
+            df=df_sample,
+            summary_prompt=summary_prompt,
+            data_schema_json=schema_understanding_json,
+            id_columns=id_columns,
+        )
+        
+        # 注册到DB-GPT
+        self._register_to_dbgpt(db_name, db_path, table_name)
+        
+        # 获取top_10_rows
+        top_10_rows_raw = df_sample.head(10).values.tolist()
+        top_10_rows = self._convert_to_json_serializable(top_10_rows_raw)
+        
+        # 获取预览数据
+        preview_data = self.get_table_preview_data(
+            db_path, table_name, preview_limit, original_filename
+        )
+        
+        return {
+            "status": "imported",
+            "message": "成功导入CSV数据",
+            "content_hash": content_hash,
+            "db_name": db_name,
+            "db_path": db_path,
+            "table_name": table_name,
+            "row_count": actual_row_count,
+            "column_count": len(df_sample.columns),
+            "columns_info": columns_info,
+            "summary_prompt": summary_prompt,
+            "data_schema_json": schema_understanding_json,
+            "id_columns": id_columns,
+            "top_10_rows": top_10_rows,
+            "preview_data": preview_data,
+            "conv_uid": conv_uid,
+        }
 
     def _register_to_dbgpt(self, db_name: str, db_path: str, table_name: str):
         """注册到 DB-GPT 数据源管理器"""
