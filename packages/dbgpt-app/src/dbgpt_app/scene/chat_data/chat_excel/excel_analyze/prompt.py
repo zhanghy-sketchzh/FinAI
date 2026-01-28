@@ -74,6 +74,12 @@ _DUCKDB_RULES_ZH = """
 - `SELECT ROUND(SUM("金额"), 2) AS "总金额"`
 - `SELECT ROUND("单价" * "数量", 2) AS "小计"`
 
+### 【日期/时间字段格式化规则】：
+**对于表示日期、月份、年月等的数值字段，必须转换为字符串，避免被当作数值显示：**
+- 月份字段（如202501、202506）：`CAST("月份" AS VARCHAR) AS "月份"`
+- 年月组合字段：`CAST("年月" AS VARCHAR) AS "年月"`
+- **关键**：这类字段虽然是数值类型，但语义上是日期标识，转为字符串可防止千分位格式化
+
 ### 【LIMIT使用规则】：
 - 禁止自动添加LIMIT，除非用户明确要求（如"前10条"、"Top 5"）
 - 默认展示所有符合条件的数据
@@ -127,6 +133,12 @@ All numeric columns must use `ROUND(column, 2)` to retain 2 decimal places:
 - `SELECT ROUND(SUM("amount"), 2) AS "total"`
 - `SELECT ROUND("price" * "quantity", 2) AS "subtotal"`
 
+### 【Date/Time Field Formatting Rules】：
+**For numeric fields representing dates, months, or year-month, MUST convert to string to prevent number formatting:**
+- Month field (e.g., 202501, 202506): `CAST("month" AS VARCHAR) AS "month"`
+- Year-month field: `CAST("year_month" AS VARCHAR) AS "year_month"`
+- **Key**: These fields are numeric but semantically date identifiers, convert to string to prevent comma formatting
+
 ### 【LIMIT Usage Rules】：
 - DO NOT automatically add LIMIT unless user explicitly requests (e.g., "top 10", "Top 5")
 - Display all data that meets conditions by default
@@ -143,6 +155,7 @@ _ANALYSIS_CONSTRAINTS_ZH = """
 - WHERE逻辑：混用AND和OR时必须用括号明确优先级
 - 别名规则：同一SELECT中不能引用本层别名；CTE名称必须用英文
 - 数值格式：所有数值必须用 ROUND(column, 2) 保留两位小数
+- **日期字段：月份等日期数值字段用 CAST(列 AS VARCHAR) 转为字符串**
 - LIMIT规则：禁止自动添加，除非用户明确要求
 
 **展示规则**：
@@ -175,6 +188,7 @@ _ANALYSIS_CONSTRAINTS_MULTI_TABLE_ZH = """
 - WHERE逻辑：混用AND和OR时必须用括号
 - CTE名称必须用英文，禁止中文
 - 数值格式：ROUND(column, 2) 保留两位小数
+- **日期字段：月份等日期数值字段用 CAST(列 AS VARCHAR) 转为字符串**
 - LIMIT规则：禁止自动添加
 
 **展示规则**：
@@ -206,6 +220,7 @@ _ANALYSIS_CONSTRAINTS_MULTI_TABLE_EN = """
 - WHERE logic: Must use parentheses when mixing AND/OR
 - CTE names must use English, no Chinese
 - Numeric formatting: ROUND(column, 2) for 2 decimal places
+- **Date fields: Month and similar date numeric fields use CAST(col AS VARCHAR) to convert to string**
 - LIMIT rules: DO NOT add automatically
 
 **Display Rules**:
@@ -223,6 +238,7 @@ _ANALYSIS_CONSTRAINTS_EN = """
 - WHERE logic: Must use parentheses when mixing AND/OR
 - Alias rules: Cannot reference aliases within same SELECT; CTE names must use English
 - Numeric formatting: All numbers must use ROUND(column, 2) for 2 decimal places
+- **Date fields: Month and similar date numeric fields use CAST(col AS VARCHAR) to convert to string**
 - LIMIT rules: DO NOT add automatically unless user explicitly requests
 
 **Display Rules**:

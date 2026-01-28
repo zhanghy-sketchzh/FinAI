@@ -2194,7 +2194,7 @@ Columns:
                     )
                 ],
                 temperature=0.7,
-                max_new_tokens=512,
+                max_new_tokens=6000,
                 context=ModelRequestContext(stream=True),
             )
             
@@ -2902,7 +2902,7 @@ Please output the JSON directly, without any other text:"""  # noqa: E501
                     )
                 ],
                 temperature=0.3,
-                max_new_tokens=2048,
+                max_new_tokens=6000,
                 context=ModelRequestContext(stream=True),
             )
 
